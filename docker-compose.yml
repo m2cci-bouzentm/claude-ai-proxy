@@ -1,0 +1,17 @@
+services:
+  claude-proxy:
+    build: .
+    container_name: claude-ai-proxy
+    ports:
+      - "4181:4181"
+    volumes:
+      - ./data:/data
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4181/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
