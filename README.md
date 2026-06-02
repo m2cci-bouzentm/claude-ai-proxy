@@ -46,21 +46,22 @@ Client (OpenAI SDK)  →  claude-ai-proxy (:4181)  →  api.anthropic.com/v1/mes
 curl http://localhost:4181/v1/chat/completions \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model": "claude-sonnet-4-20250514", "messages": [{"role": "user", "content": "Hello!"}]}'
+  -d '{"model": "claude-sonnet-4-6", "messages": [{"role": "user", "content": "Hello!"}]}'
 
 # OpenAI SDK
 from openai import OpenAI
 client = OpenAI(api_key="your-proxy-key", base_url="http://localhost:4181/v1")
-client.chat.completions.create(model="claude-sonnet-4-20250514", messages=[{"role": "user", "content": "Hello!"}])
+client.chat.completions.create(model="claude-sonnet-4-6", messages=[{"role": "user", "content": "Hello!"}])
 ```
 
 ## Model mapping
 
 | OpenAI alias | Anthropic model |
 |-------------|-----------------|
-| gpt-4, gpt-4o, gpt-4-turbo | claude-sonnet-4-20250514 |
+| gpt-4, gpt-4o, gpt-4-turbo | claude-sonnet-4-6 |
 | gpt-4o-mini | claude-haiku-4-5-20251001 |
-| o1, o1-pro | claude-opus-4-20250514 |
+| o1 | claude-opus-4-6 |
+| o1-pro | claude-opus-4-8 |
 
 Or use Anthropic model IDs directly.
 
