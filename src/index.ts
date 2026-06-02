@@ -13,18 +13,6 @@ const API_KEY = process.env.API_KEY;
 const DEFAULT_MODEL = process.env.DEFAULT_MODEL || "claude-sonnet-4-6";
 const PORT = process.env.PORT || 4181;
 
-const MODEL_MAP: Record<string, string> = {
-  "gpt-4": "claude-sonnet-4-6",
-  "gpt-4o": "claude-sonnet-4-6",
-  "gpt-4-turbo": "claude-sonnet-4-6",
-  "gpt-4o-mini": "claude-haiku-4-5-20251001",
-  "o1": "claude-opus-4-6",
-  "o1-pro": "claude-opus-4-8",
-};
-
-function resolveModel(model: string): string {
-  return MODEL_MAP[model] || model;
-}
 
 function auth(req: express.Request, res: express.Response, next: express.NextFunction) {
   if (!API_KEY) return next();
@@ -120,18 +108,18 @@ app.post("/v1/chat/completions", auth, async (req, res) => {
     return;
   }
 
-  const resolvedModel = resolveModel(model || DEFAULT_MODEL);
+  const selectedModel = model || DEFAULT_MODEL;
   const maxTokens = max_tokens || max_completion_tokens || 8192;
 
-  if (stream) return handleStream(res, messages, resolvedModel, maxTokens);
+  if (stream) return handleStream(res, messages, selectedModel, maxTokens);
 
   try {
-    const { content, usage } = await createCompletion(messages, resolvedModel, maxTokens);
+    const { content, usage } = await createCompletion(messages, selectedModel, maxTokens);
     res.json({
       id: `chatcmpl-${Date.now()}`,
       object: "chat.completion",
       created: Math.floor(Date.now() / 1000),
-      model: resolvedModel,
+      model: selectedModel,
       choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
       usage: {
         prompt_tokens: usage.input_tokens,

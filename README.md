@@ -54,17 +54,6 @@ client = OpenAI(api_key="your-proxy-key", base_url="http://localhost:4181/v1")
 client.chat.completions.create(model="claude-sonnet-4-6", messages=[{"role": "user", "content": "Hello!"}])
 ```
 
-## Model mapping
-
-| OpenAI alias | Anthropic model |
-|-------------|-----------------|
-| gpt-4, gpt-4o, gpt-4-turbo | claude-sonnet-4-6 |
-| gpt-4o-mini | claude-haiku-4-5-20251001 |
-| o1 | claude-opus-4-6 |
-| o1-pro | claude-opus-4-8 |
-
-Or use Anthropic model IDs directly.
-
 ## Auth details
 
 | Field | Value |
