@@ -6,6 +6,7 @@ services:
       - "4181:4181"
     volumes:
       - ./data:/data
+      - ~/.claude/.credentials.json:/root/.claude/.credentials.json
     env_file:
       - .env
     restart: unless-stopped
