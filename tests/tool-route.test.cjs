@@ -110,3 +110,24 @@ test('HTTP SSE uses stable IDs, usage, finish and DONE; disconnect aborts upstre
     await Promise.race([disconnected, new Promise((_, reject) => setTimeout(() => reject(new Error('Disconnect did not abort upstream')), 1500))]);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
+
+test('images preserve ordering, user-level instructions and tool-result history', () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=';
+  const img = { type: 'image_url', image_url: { url: 'data:image/png;base64,' + png, detail: 'high' } };
+  const parts = [{ type: 'text', text: 'before' }, img, { type: 'text', text: 'after' },
+    { type: 'image_url', image_url: { url: 'https://example.com/picture.png' } }];
+  const p = prepareToolRequest(request({ messages: [{ role: 'system', content: 'consumer' }, { role: 'user', content: parts }] }), 'fallback').request;
+  assert.equal(p.system, undefined);
+  assert.equal(p.messages[0].role, 'user');
+  assert.deepEqual(p.messages[0].content.slice(1), [parts[0], { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }, parts[2], { type: 'image', source: { type: 'url', url: 'https://example.com/picture.png' } }]);
+  const follow = prepareToolRequest(request({ messages: [{ role: 'user', content: 'look' },
+    { role: 'assistant', content: null, tool_calls: [{ id: 'image_call', type: 'function', function: { name: 'echo', arguments: '{}' } }] },
+    { role: 'tool', tool_call_id: 'image_call', content: [img] }] }), 'fallback').request;
+  assert.deepEqual(follow.messages[2].content[0], { type: 'tool_result', tool_use_id: 'image_call', content: [p.messages[0].content[2]] });
+  for (const url of ['file:///etc/passwd', 'https://user:pass@example.com/a', 'data:image/svg+xml;base64,AAAA', 'data:image/png;base64,%%%', 'data:image/png;base64,AB==', 'data:image/png;base64,' + Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64')]) {
+    assert.throws(() => prepareToolRequest(request({ messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url } }] }] }), 'fallback'));
+  }
+  for (const role of ['system', 'developer', 'assistant']) {
+    assert.throws(() => prepareToolRequest(request({ messages: [{ role, content: [img] }, { role: 'user', content: 'hi' }] }), 'fallback'));
+  }
+});

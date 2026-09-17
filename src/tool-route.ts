@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { Stream } from "@anthropic-ai/sdk/core/streaming";
 import { MessageStream } from "@anthropic-ai/sdk/lib/MessageStream";
-import type { MessageStreamEvent } from "@anthropic-ai/sdk/resources/messages";
+import type { ImageBlockParam, MessageStreamEvent } from "@anthropic-ai/sdk/resources/messages";
 import type { RequestHandler } from "express";
 import Ajv, { type ValidateFunction } from "ajv";
 
@@ -20,6 +20,37 @@ function text(value: unknown, nullable = false): string {
     return value.map(p => p.text).join("\n");
   }
   throw new ToolError("Only text message content is supported on this endpoint");
+}
+// Use the SDK's native image source representation; never download caller URLs.
+function imageBlock(value: unknown): ImageBlockParam {
+  if (!record(value) || typeof value.url !== "string" ||
+      (value.detail !== undefined && !["auto", "low", "high"].includes(value.detail))) {
+    throw new ToolError("Invalid image_url or detail");
+  }
+  const url = value.url;
+  if (url.startsWith("data:")) {
+    const match = /^data:(image\/(?:jpeg|png|gif|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(url);
+    if (!match || match[2].length % 4 !== 0) throw new ToolError("Use a base64 JPEG, PNG, GIF or WebP image data URL");
+    const bytes = Buffer.from(match[2], "base64");
+    if (!bytes.length || bytes.toString("base64") !== match[2]) throw new ToolError("Invalid image base64");
+    if (bytes.length > 5 * 1024 * 1024) throw new ToolError("Image exceeds the 5 MiB limit", 413);
+    return { type: "image", source: { type: "base64", media_type: match[1] as "image/png" | "image/jpeg" | "image/gif" | "image/webp", data: match[2] } };
+  }
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { throw new ToolError("Invalid image URL"); }
+  if (!["https:", "http:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw new ToolError("Image URLs must use HTTP(S) without embedded credentials");
+  }
+  return { type: "image", source: { type: "url", url } };
+}
+function userContent(value: unknown): Obj[] {
+  if (typeof value === "string") return value ? [{ type: "text", text: value }] : [];
+  if (!Array.isArray(value)) throw new ToolError("Expected text or a content-part array");
+  return value.map(part => {
+    if (record(part) && part.type === "text" && typeof part.text === "string") return { type: "text", text: part.text };
+    if (record(part) && part.type === "image_url") return imageBlock(part.image_url);
+    throw new ToolError("Only text and image_url content parts are supported for user/tool messages");
+  });
 }
 function localReferences(value: unknown): void {
   if (Array.isArray(value)) value.forEach(localReferences);
@@ -89,9 +120,9 @@ export function prepareToolRequest(input: unknown, defaultModel: string) {
     if (!record(message)) throw new ToolError("Invalid message");
     const role = message.role;
     if (!["system", "developer", "user", "assistant", "tool"].includes(role)) throw new ToolError("Invalid message role");
-    const content = text(message.content, role === "assistant");
+    const content = role === "user" || role === "tool" ? userContent(message.content) : text(message.content, role === "assistant");
     if (role === "system" || role === "developer") {
-      consumerInstructions.push({ source_role: role, content });
+      consumerInstructions.push({ source_role: role, content: content as string });
       continue;
     }
     let blocks: Obj[] = [];
@@ -111,10 +142,11 @@ export function prepareToolRequest(input: unknown, defaultModel: string) {
       if (typeof message.tool_call_id !== "string" || !pending.delete(message.tool_call_id)) {
         throw new ToolError("Tool result must match an outstanding tool_call_id");
       }
-      blocks.push({ type: "tool_result", tool_use_id: message.tool_call_id, content });
+      blocks.push({ type: "tool_result", tool_use_id: message.tool_call_id, content: typeof message.content === "string" ? message.content : content });
     } else {
       if (pending.size) throw new ToolError("Supply all tool results before continuing the conversation");
-      if (content) blocks.push({ type: "text", text: content });
+      if (Array.isArray(content)) blocks.push(...content);
+      else if (content) blocks.push({ type: "text", text: content });
       if (message.tool_calls !== undefined) {
         if (role !== "assistant" || !Array.isArray(message.tool_calls)) throw new ToolError("Invalid tool_calls history");
         for (const call of message.tool_calls) {

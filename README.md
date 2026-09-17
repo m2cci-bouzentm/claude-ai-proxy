@@ -122,3 +122,14 @@ Run `npm test` for route, compatibility, schema, streaming and cancellation test
 ## Security note
 
 Claude Code's subscriber-tier API access is gated by the presence of the CLI system prompt in the request body — not by cryptographic signing or token scoping. The system prompt is shipped in plaintext inside the compiled CLI binary, making it trivially extractable. It functions as a shared secret in cleartext.
+
+### Image input on the tool endpoint
+
+User messages and tool results accept OpenAI content arrays containing `text` and
+`image_url` parts. Images are converted to native Anthropic image blocks, preserving
+order. Use base64 data URLs (JPEG, PNG, GIF or WebP, up to 5 MiB per image) or HTTP(S)
+URLs that Anthropic can access. The proxy does not download URLs or read local paths.
+OpenAI `detail` values are accepted but have no direct native equivalent and are
+not forwarded. Images are input only; assistant responses remain text/tool calls.
+The 32 MiB total request limit still applies. System/developer messages remain
+text-only and are moved to user-level context as described above.
