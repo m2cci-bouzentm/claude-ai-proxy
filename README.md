@@ -118,6 +118,30 @@ Run `npm test` for route, compatibility, schema, streaming and cancellation test
 | `ACCOUNT_UUID` | required | Claude account UUID |
 | `DEVICE_ID` | required | Device ID hex string |
 | `SYSTEM_PROMPT_PATH` | `/data/system_prompt.json` | CLI system prompt file |
+| `TOOL_PROMPT_CACHE_TTL` | `5m` | Automatic conversation caching on `/tools/v1` only: `5m`, `1h`, or `off` |
+
+### Prompt caching on the tool endpoint
+
+The proxy adds Anthropic's top-level automatic `cache_control` to reuse the growing
+conversation prefix across turns. The system prompt still comes only from
+`SYSTEM_PROMPT_PATH`, with its existing cache markers and established client-version
+preamble handling. Caching adds no prompt text and does not change message roles:
+consumer system/developer instructions remain user-level context by design.
+
+The bundled prompt has two one-hour cache markers; automatic caching uses a third
+of Anthropic's four available slots. Its default five-minute lifetime suits active
+tool loops and can follow the earlier one-hour markers. Custom prompt files must
+leave a slot available and respect Anthropic's longest-TTL-first ordering.
+Client-supplied cache markers are not forwarded; the server owns this policy.
+Set `TOOL_PROMPT_CACHE_TTL=off` to disable conversation caching while retaining the
+file's existing system caches. The legacy `/v1` endpoint is unaffected.
+
+JSON and SSE usage (when `stream_options.include_usage` is true) expose
+`prompt_tokens_details.cached_tokens` and `prompt_tokens_details.cache_write_tokens`.
+`prompt_tokens` includes uncached input, cache reads, and cache writes exactly once.
+Cache hits require a matching prefix; changing earlier tools/instructions or
+compacting history can reduce hits. Responses and tool results are never memoized.
+API cache pricing is not a guarantee of equivalent subscription allowance savings.
 
 ## Security note
 

@@ -35,7 +35,7 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     };
   `);
   const child = spawn(process.execPath, ['--require', preload, 'dist/index.js'], {
-    env: { ...process.env, PORT: '0', API_KEY: 'test-only', DEFAULT_MODEL: 'claude-sonnet-4-6' }, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, PORT: '0', API_KEY: 'test-only', DEFAULT_MODEL: 'claude-sonnet-4-6', TOOL_PROMPT_CACHE_TTL: '5m' }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   try {
     const port = await new Promise((resolve, reject) => {
@@ -61,6 +61,9 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     assert.equal(requests[0].tools, undefined); assert.deepEqual(requests[0].thinking, { type: 'adaptive' });
     assert.deepEqual(requests[0].messages, [{ role: 'user', content: 'hi' }]);
     assert.equal(requests[2].tools[0].name, 'echo'); assert.equal(requests[2].thinking, undefined);
+    assert.equal(requests[0].cache_control, undefined);
+    assert.equal(requests[1].cache_control, undefined);
+    assert.deepEqual(requests[2].cache_control, { type: 'ephemeral', ttl: '5m' });
     const expectedSystem = requests[0].system.map(b => b.text?.startsWith('x-anthropic-billing-header:')
       ? { ...b, text: b.text.replace(/cc_version=\d+\.\d+\.\d+/, 'cc_version=2.1.251') } : b);
     assert.deepEqual(requests[2].system, expectedSystem);

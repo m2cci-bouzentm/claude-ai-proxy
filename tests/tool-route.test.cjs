@@ -7,8 +7,8 @@ const tool = { type: 'function', function: { name: 'echo', parameters: {
   type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false,
 } } };
 const request = (extra = {}) => ({ model: 'claude-sonnet-4-6', messages: [{ role: 'user', content: 'Echo café' }], tools: [tool], ...extra });
-function fixture({ calls = [{ id: 'toolu_one', name: 'echo', input: { text: 'café' } }], stop, truncated = false, error = false, empty = false, rawArgs, thinking } = {}) {
-  const events = [{ type: 'message_start', message: { id: 'msg_test', type: 'message', role: 'assistant', model: 'claude-sonnet-4-6', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 3, output_tokens: 0, cache_read_input_tokens: 4 } } }];
+function fixture({ calls = [{ id: 'toolu_one', name: 'echo', input: { text: 'café' } }], stop, truncated = false, error = false, empty = false, rawArgs, thinking, usage = {} } = {}) {
+  const events = [{ type: 'message_start', message: { id: 'msg_test', type: 'message', role: 'assistant', model: 'claude-sonnet-4-6', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 3, output_tokens: 0, cache_read_input_tokens: 4, ...usage } } }];
   const offset = thinking ? 1 : 0;
   if (thinking) events.push({ type: 'content_block_start', index: 0, content_block: thinking }, { type: 'content_block_stop', index: 0 });
   if (!calls.length && !empty) {
@@ -89,7 +89,7 @@ test('HTTP SSE uses stable IDs, usage, finish and DONE; disconnect aborts upstre
     if (body.model === 'disconnect') {
       return new Promise((_resolve, reject) => signal.addEventListener('abort', () => { aborted(); reject(new Error('aborted')); }, { once: true }));
     }
-    return fixture({ thinking });
+    return fixture({ thinking, usage: { cache_creation_input_tokens: 6 } });
   }, 'fallback'));
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
@@ -103,12 +103,55 @@ test('HTTP SSE uses stable IDs, usage, finish and DONE; disconnect aborts upstre
     assert.deepEqual(events[1].choices[0].delta.reasoning_details, [thinking]);
     assert.equal(events[2].choices[0].delta.tool_calls[0].index, 0);
     assert.equal(events.at(-2).choices[0].finish_reason, 'tool_calls');
-    assert.equal(events.at(-1).usage.total_tokens, 12);
+    assert.deepEqual(events.at(-1).usage, { prompt_tokens: 13, completion_tokens: 5, total_tokens: 18,
+      prompt_tokens_details: { cached_tokens: 4, cache_write_tokens: 6 } });
     const controller = new AbortController();
     const pending = fetch(url, { method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request({ model: 'disconnect' })) }).catch(() => {});
     await new Promise(resolve => setTimeout(resolve, 50)); controller.abort(); await pending;
     await Promise.race([disconnected, new Promise((_, reject) => setTimeout(() => reject(new Error('Disconnect did not abort upstream')), 1500))]);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+});
+
+test('server cache policy leaves message roles/content intact and ignores client markers', () => {
+  const previous = process.env.TOOL_PROMPT_CACHE_TTL;
+  try {
+    delete process.env.TOOL_PROMPT_CACHE_TTL;
+    const input = request({ cache_control: { type: 'ephemeral', ttl: 'invalid' },
+      messages: [{ role: 'system', content: 'SYSTEM_USER_CONTEXT' },
+        { role: 'developer', content: 'DEVELOPER_USER_CONTEXT' },
+        { role: 'user', content: [{ type: 'text', text: 'hello', cache_control: { type: 'ephemeral', ttl: '1h' } }] }] });
+    const original = structuredClone(input);
+    const enabled = prepareToolRequest(input, '').request;
+    assert.deepEqual(enabled.cache_control, { type: 'ephemeral', ttl: '5m' });
+    assert.equal(enabled.system, undefined);
+    assert.equal(enabled.messages[0].role, 'user');
+    assert.match(enabled.messages[0].content[0].text, /SYSTEM_USER_CONTEXT/);
+    assert.match(enabled.messages[0].content[0].text, /DEVELOPER_USER_CONTEXT/);
+    assert.deepEqual(enabled.messages[0].content[1], { type: 'text', text: 'hello' });
+    assert.deepEqual(input, original);
+    process.env.TOOL_PROMPT_CACHE_TTL = 'off';
+    const disabled = prepareToolRequest(input, '').request;
+    assert.equal(disabled.cache_control, undefined);
+    const { cache_control, ...withoutCache } = enabled;
+    assert.deepEqual(disabled, withoutCache);
+    process.env.TOOL_PROMPT_CACHE_TTL = '1h';
+    assert.deepEqual(prepareToolRequest(input, '').request.cache_control, { type: 'ephemeral', ttl: '1h' });
+    process.env.TOOL_PROMPT_CACHE_TTL = 'bad';
+    assert.throws(() => prepareToolRequest(input, ''), e => e.status === 500);
+  } finally {
+    if (previous === undefined) delete process.env.TOOL_PROMPT_CACHE_TTL;
+    else process.env.TOOL_PROMPT_CACHE_TTL = previous;
+  }
+});
+
+test('JSON usage separates cache reads/writes without double-counting total input', async () => {
+  const p = prepareToolRequest(request(), '');
+  for (const [read, write] of [[4, 6], [0, 0], [null, null]]) {
+    const result = await collectToolResponse(fixture({ usage: { cache_read_input_tokens: read, cache_creation_input_tokens: write } }), p);
+    const prompt = 3 + (read ?? 0) + (write ?? 0);
+    assert.deepEqual(result.usage, { prompt_tokens: prompt, completion_tokens: 5, total_tokens: prompt + 5,
+      prompt_tokens_details: { cached_tokens: read ?? 0, cache_write_tokens: write ?? 0 } });
+  }
 });
 
 test('images preserve ordering, user-level instructions and tool-result history', () => {

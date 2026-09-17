@@ -181,6 +181,14 @@ export function prepareToolRequest(input: unknown, defaultModel: string) {
       JSON.stringify(consumerInstructions) });
   }
   const request: Obj = { model, max_tokens: maxTokens, messages };
+  // Server-owned automatic caching follows the growing conversation. Keep the
+  // file-backed system prompt and its existing explicit cache markers untouched.
+  // Ignore client markers so they cannot exhaust slots or conflict with TTLs.
+  const cacheTtl = process.env.TOOL_PROMPT_CACHE_TTL ?? "5m";
+  if (!["5m", "1h", "off"].includes(cacheTtl)) {
+    throw new ToolError("TOOL_PROMPT_CACHE_TTL must be 5m, 1h or off", 500);
+  }
+  if (cacheTtl !== "off") request.cache_control = { type: "ephemeral", ttl: cacheTtl };
   // Some subscriber-tier backends emit an empty turn for tools + choice=none.
   // Omitting the definitions disables calls without relying on that path.
   if (tools.length && mode !== "none") {
@@ -243,7 +251,9 @@ export async function collectToolResponse(response: Response, prepared: ReturnTy
     try { JSON.parse(raw); } catch { throw new ToolError("Invalid upstream tool arguments", 502); }
   }
   const finish = message.stop_reason;
-  const prompt = message.usage.input_tokens + (message.usage.cache_read_input_tokens ?? 0) + (message.usage.cache_creation_input_tokens ?? 0);
+  const cached = message.usage.cache_read_input_tokens ?? 0;
+  const written = message.usage.cache_creation_input_tokens ?? 0;
+  const prompt = message.usage.input_tokens + cached + written;
   const completion = message.usage.output_tokens;
   const calls: Obj[] = [], ids = new Set<string>();
   const reasoningDetails = message.content.filter(b => b.type === "thinking" || b.type === "redacted_thinking");
@@ -268,7 +278,8 @@ export async function collectToolResponse(response: Response, prepared: ReturnTy
       ...(reasoningDetails.length ? { reasoning_details: reasoningDetails } : {}),
       ...(calls.length ? { tool_calls: calls } : {}) },
       finish_reason: calls.length ? "tool_calls" : finish === "max_tokens" ? "length" : finish === "refusal" ? "content_filter" : "stop" }],
-    usage: { prompt_tokens: prompt, completion_tokens: completion, total_tokens: prompt + completion } };
+    usage: { prompt_tokens: prompt, completion_tokens: completion, total_tokens: prompt + completion,
+      prompt_tokens_details: { cached_tokens: cached, cache_write_tokens: written } } };
 }
 
 export function createToolHandler(transport: Transport, defaultModel: string): RequestHandler {
