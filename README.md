@@ -70,7 +70,10 @@ updated conversation to the same endpoint. The proxy never executes tools.
 - Full draft-07 parameter schemas are forwarded and validated with **Ajv**.
   No type coercion, argument repair, remote schema fetching, or prose scanning.
   Unknown tools and invalid arguments fail with an error rather than executing.
-- System/developer instructions and tool-result IDs are preserved on this route.
+- Consumer system/developer instructions are preserved as a labeled user-level
+  context block at the start of the conversation. They are never appended to
+  Anthropic's `system` field, which contains only the proxy's bundled prompt.
+  User messages and native tool-result IDs are preserved on this route.
 - `stream: true` returns OpenAI SSE, with stable IDs, indexed calls, finish reason,
   `[DONE]`, and optional `stream_options.include_usage`. The whole upstream turn
   is buffered before emitting SSE so all calls can be validated first. This adds

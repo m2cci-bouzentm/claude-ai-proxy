@@ -26,11 +26,17 @@ function fixture({ calls = [{ id: 'toolu_one', name: 'echo', input: { text: 'caf
   return new Response(new ReadableStream({ start(c) { for (const b of bytes) c.enqueue(Uint8Array.of(b)); c.close(); } }));
 }
 
-test('tool round trip preserves schemas, IDs, system instructions, and parallel results', async () => {
-  const p = prepareToolRequest(request({ messages: [{ role: 'system', content: 'Be concise' }, { role: 'user', content: 'Echo café' }], tool_choice: 'required' }), 'fallback');
+test('tool round trip preserves schemas, IDs, consumer instructions at user level, and parallel results', async () => {
+  const p = prepareToolRequest(request({ messages: [{ role: 'system', content: 'Be concise' }, { role: 'developer', content: 'Use the caller workspace' }, { role: 'user', content: 'Echo café' }], tool_choice: 'required' }), 'fallback');
   assert.deepEqual(p.request.tools[0].input_schema, tool.function.parameters);
   assert.deepEqual(p.request.tool_choice, { type: 'any' });
-  assert.equal(p.request.system, 'Be concise');
+  assert.equal(p.request.system, undefined);
+  assert.equal(p.request.messages[0].role, 'user');
+  const prefix = p.request.messages[0].content[0].text;
+  assert.deepEqual(JSON.parse(prefix.slice(prefix.indexOf('\n') + 1)), [
+    { source_role: 'system', content: 'Be concise' }, { source_role: 'developer', content: 'Use the caller workspace' },
+  ]);
+  assert.equal(p.request.messages[0].content[1].text, 'Echo café');
   const result = await collectToolResponse(fixture(), p);
   assert.equal(result.choices[0].finish_reason, 'tool_calls');
   assert.equal(result.usage.prompt_tokens, 7);

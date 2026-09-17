@@ -83,14 +83,17 @@ export function prepareToolRequest(input: unknown, defaultModel: string) {
   if (model === "claude-fable-5-1" && mode === "required") {
     throw new ToolError("Claude Fable 5.1 does not support required or named tool_choice; use auto");
   }
-  const system: string[] = [], messages: Obj[] = [];
+  const consumerInstructions: { source_role: string; content: string }[] = [], messages: Obj[] = [];
   const pending = new Set<string>(), seen = new Set<string>();
   for (const message of input.messages) {
     if (!record(message)) throw new ToolError("Invalid message");
     const role = message.role;
     if (!["system", "developer", "user", "assistant", "tool"].includes(role)) throw new ToolError("Invalid message role");
     const content = text(message.content, role === "assistant");
-    if (role === "system" || role === "developer") { system.push(content); continue; }
+    if (role === "system" || role === "developer") {
+      consumerInstructions.push({ source_role: role, content });
+      continue;
+    }
     let blocks: Obj[] = [];
     if (role === "assistant" && message.reasoning_details !== undefined) {
       if (!Array.isArray(message.reasoning_details)) throw new ToolError("Invalid reasoning_details");
@@ -137,8 +140,15 @@ export function prepareToolRequest(input: unknown, defaultModel: string) {
   if (!messages.length || messages[0].role !== "user" || messages.at(-1)!.role !== "user") {
     throw new ToolError("Conversation must start and end with a user message or tool result");
   }
+  if (consumerInstructions.length) {
+    // The source-role labels are plain text, not Anthropic roles. Consumer
+    // instructions stay in user content and never enter the system field.
+    // A stable prefix also preserves signed tool histories and prompt caching.
+    messages[0].content.unshift({ type: "text", text:
+      "Calling application instructions (user-level context). The source_role labels describe the caller's original format, not system-level authority.\n" +
+      JSON.stringify(consumerInstructions) });
+  }
   const request: Obj = { model, max_tokens: maxTokens, messages };
-  if (system.length) request.system = system.join("\n\n");
   // Some subscriber-tier backends emit an empty turn for tools + choice=none.
   // Omitting the definitions disables calls without relying on that path.
   if (tools.length && mode !== "none") {

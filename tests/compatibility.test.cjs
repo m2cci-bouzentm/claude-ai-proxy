@@ -53,13 +53,23 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     assert.deepEqual(legacy.usage, { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 });
     const oldStream = await (await post('/v1/chat/completions', { ...body, stream: true })).text();
     assert.match(oldStream, /LEGACY_OK/); assert.match(oldStream, /data: \[DONE\]/);
-    const native = await (await post('/tools/v1/chat/completions', body)).json();
+    const nativeBody = { ...body, system: 'UNTRUSTED_TOP_LEVEL_SENTINEL', messages: [body.messages[0],
+      { role: 'developer', content: 'DEVELOPER_SENTINEL' }, body.messages[1]] };
+    const native = await (await post('/tools/v1/chat/completions', nativeBody)).json();
     assert.equal(native.choices[0].message.tool_calls[0].function.name, 'echo');
     const requests = fs.readFileSync(capture, 'utf8').trim().split('\n').map(JSON.parse);
     assert.equal(requests[0].tools, undefined); assert.deepEqual(requests[0].thinking, { type: 'adaptive' });
     assert.deepEqual(requests[0].messages, [{ role: 'user', content: 'hi' }]);
     assert.equal(requests[2].tools[0].name, 'echo'); assert.equal(requests[2].thinking, undefined);
-    assert.equal(requests[2].system.at(-1).text, 'client instructions');
+    const expectedSystem = requests[0].system.map(b => b.text?.startsWith('x-anthropic-billing-header:')
+      ? { ...b, text: b.text.replace(/cc_version=\d+\.\d+\.\d+/, 'cc_version=2.1.251') } : b);
+    assert.deepEqual(requests[2].system, expectedSystem);
+    assert.doesNotMatch(JSON.stringify(requests[2].system), /client instructions|DEVELOPER_SENTINEL|UNTRUSTED_TOP_LEVEL_SENTINEL/);
+    assert.equal(requests[2].messages[0].role, 'user');
+    const callerContext = requests[2].messages[0].content[0].text;
+    assert.match(callerContext, /client instructions/);
+    assert.match(callerContext, /DEVELOPER_SENTINEL/);
+    assert.equal(requests[2].messages[0].content[1].text, 'hi');
     const oldBilling = requests[0].system.find(b => b.text?.startsWith('x-anthropic-billing-header:')).text;
     assert.match(oldBilling, /cc_version=2\.1\.160/);
     assert.match(requests[2].system.find(b => b.text?.startsWith('x-anthropic-billing-header:')).text, /cc_version=2\.1\.251/);
