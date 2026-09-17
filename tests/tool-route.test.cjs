@@ -7,15 +7,17 @@ const tool = { type: 'function', function: { name: 'echo', parameters: {
   type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false,
 } } };
 const request = (extra = {}) => ({ model: 'claude-sonnet-4-6', messages: [{ role: 'user', content: 'Echo café' }], tools: [tool], ...extra });
-function fixture({ calls = [{ id: 'toolu_one', name: 'echo', input: { text: 'café' } }], stop, truncated = false, error = false, empty = false, rawArgs } = {}) {
+function fixture({ calls = [{ id: 'toolu_one', name: 'echo', input: { text: 'café' } }], stop, truncated = false, error = false, empty = false, rawArgs, thinking } = {}) {
   const events = [{ type: 'message_start', message: { id: 'msg_test', type: 'message', role: 'assistant', model: 'claude-sonnet-4-6', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 3, output_tokens: 0, cache_read_input_tokens: 4 } } }];
+  const offset = thinking ? 1 : 0;
+  if (thinking) events.push({ type: 'content_block_start', index: 0, content_block: thinking }, { type: 'content_block_stop', index: 0 });
   if (!calls.length && !empty) {
     events.push({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
       { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'done café' } }, { type: 'content_block_stop', index: 0 });
   }
-  calls.forEach((c, i) => events.push({ type: 'content_block_start', index: i, content_block: { type: 'tool_use', ...c, input: {} } },
-    { type: 'content_block_delta', index: i, delta: { type: 'input_json_delta', partial_json: rawArgs ?? JSON.stringify(c.input) } },
-    { type: 'content_block_stop', index: i }));
+  calls.forEach((c, i) => events.push({ type: 'content_block_start', index: i + offset, content_block: { type: 'tool_use', ...c, input: {} } },
+    { type: 'content_block_delta', index: i + offset, delta: { type: 'input_json_delta', partial_json: rawArgs ?? JSON.stringify(c.input) } },
+    { type: 'content_block_stop', index: i + offset }));
   if (error) events.push({ type: 'error', error: { message: 'sensitive upstream text' } });
   events.push({ type: 'message_delta', delta: { stop_reason: stop ?? (calls.length ? 'tool_use' : 'end_turn') }, usage: { output_tokens: 5 } });
   if (!truncated) events.push({ type: 'message_stop' });
@@ -56,6 +58,10 @@ test('constraints reject malformed, unknown, truncated or forbidden calls', asyn
   const disabled = prepareToolRequest(request({ tool_choice: 'none' }), 'fallback');
   assert.equal(disabled.request.tools, undefined);
   assert.equal(disabled.request.tool_choice, undefined);
+  assert.throws(() => prepareToolRequest(request({ model: 'claude-fable-5-1', tool_choice: 'required' }), 'fallback'), /use auto/);
+  const thinking = { type: 'thinking', thinking: 'Signed reasoning', signature: 'opaque-signature' };
+  const preserved = prepareToolRequest(request({ messages: [...request().messages, { role: 'assistant', content: 'done', reasoning_details: [thinking] }, { role: 'user', content: 'continue' }] }), 'fallback');
+  assert.deepEqual(preserved.request.messages[1].content[0], thinking);
   for (const options of [{ truncated: true }, { error: true }, { stop: 'max_tokens' }, { calls: [], empty: true }, { rawArgs: '{"text":"unfinished' },
     { calls: [{ id: 'a', name: 'invented', input: {} }] }, { calls: [{ id: 'a', name: 'echo', input: { text: 5 } }] }]) {
     await assert.rejects(collectToolResponse(fixture(options), p));
@@ -70,13 +76,14 @@ test('constraints reject malformed, unknown, truncated or forbidden calls', asyn
 
 test('HTTP SSE uses stable IDs, usage, finish and DONE; disconnect aborts upstream', async () => {
   const app = express(); app.use(express.json());
+  const thinking = { type: 'thinking', thinking: 'Signed reasoning', signature: 'opaque-signature' };
   let aborted;
   const disconnected = new Promise(resolve => { aborted = resolve; });
   app.post('/tools/v1/chat/completions', createToolHandler(async (body, signal) => {
     if (body.model === 'disconnect') {
       return new Promise((_resolve, reject) => signal.addEventListener('abort', () => { aborted(); reject(new Error('aborted')); }, { once: true }));
     }
-    return fixture();
+    return fixture({ thinking });
   }, 'fallback'));
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
@@ -87,7 +94,8 @@ test('HTTP SSE uses stable IDs, usage, finish and DONE; disconnect aborts upstre
     const raw = await response.text(); assert.ok(raw.endsWith('data: [DONE]\n\n'));
     const events = raw.split('\n\n').filter(s => s.startsWith('data: {')).map(s => JSON.parse(s.slice(6)));
     assert.equal(new Set(events.map(e => e.id)).size, 1);
-    assert.equal(events[1].choices[0].delta.tool_calls[0].index, 0);
+    assert.deepEqual(events[1].choices[0].delta.reasoning_details, [thinking]);
+    assert.equal(events[2].choices[0].delta.tool_calls[0].index, 0);
     assert.equal(events.at(-2).choices[0].finish_reason, 'tool_calls');
     assert.equal(events.at(-1).usage.total_tokens, 12);
     const controller = new AbortController();

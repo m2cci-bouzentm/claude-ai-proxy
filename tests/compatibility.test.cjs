@@ -60,9 +60,12 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     assert.deepEqual(requests[0].messages, [{ role: 'user', content: 'hi' }]);
     assert.equal(requests[2].tools[0].name, 'echo'); assert.equal(requests[2].thinking, undefined);
     assert.equal(requests[2].system.at(-1).text, 'client instructions');
+    const oldBilling = requests[0].system.find(b => b.text?.startsWith('x-anthropic-billing-header:')).text;
+    assert.match(oldBilling, /cc_version=2\.1\.160/);
+    assert.match(requests[2].system.find(b => b.text?.startsWith('x-anthropic-billing-header:')).text, /cc_version=2\.1\.251/);
     assert.deepEqual(await (await fetch(url + '/v1/models')).json(), await (await fetch(url + '/tools/v1/models')).json());
     assert.equal((await (await post('/v1/chat/completions', {})).json()).error.message, 'messages is required');
-    const large = { ...body, messages: [{ role: 'user', content: 'x'.repeat(110 * 1024) }] };
+    const large = { ...body, messages: [{ role: 'user', content: 'x'.repeat(3 * 1024 * 1024) }] };
     assert.equal((await post('/v1/chat/completions', large)).status, 413);
     assert.equal((await post('/tools/v1/chat/completions', large)).status, 200);
   } finally { child.kill(); await new Promise(resolve => child.once('exit', resolve)); fs.rmSync(tmp, { recursive: true, force: true }); }

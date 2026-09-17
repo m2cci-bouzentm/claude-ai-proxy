@@ -75,11 +75,23 @@ updated conversation to the same endpoint. The proxy never executes tools.
   `[DONE]`, and optional `stream_options.include_usage`. The whole upstream turn
   is buffered before emitting SSE so all calls can be validated first. This adds
   time to the first emitted chunk; it is not live token streaming.
-- Requests are limited to 2 MiB, upstream responses to 8 MiB, and upstream time to
+- Requests are limited to 32 MiB (to accommodate 1M-token contexts), upstream responses to 8 MiB, and upstream time to
   120 seconds. Client disconnects abort the new route's upstream request.
 - Text messages only; `n=1`. `response_format` and legacy `functions`/`function_call`
   are rejected. Adaptive thinking is not enabled on this route because forced
   tool selection is incompatible with it. Existing-route thinking is unchanged.
+
+The standard API IDs `claude-opus-4-6`, `claude-opus-4-8`, `claude-opus-5`, and
+`claude-fable-5-1` support 1M context by default; no `[1m]` suffix or beta header is
+needed. Set the client's context length to `1000000`. See
+[Anthropic's context documentation](https://platform.claude.com/docs/en/build-with-claude/context-windows).
+Fable 5.1 only supports automatic tool selection (or no tools), not forced/named
+calls. Its signed thinking blocks, when returned, are preserved as
+`reasoning_details` in JSON and SSE and must be replayed unchanged by the client.
+The opt-in route uses the 2.1.251 client protocol identity required by Fable 5.1;
+the existing route retains its previous identity and behavior. Model availability
+still depends on the authenticated account, and the model's token limit applies
+independently of the HTTP byte limit.
 
 Implementation references: [ToolBridge](https://github.com/Oct4Pie/toolbridge)
 demonstrates an isolated tool translation layer, and

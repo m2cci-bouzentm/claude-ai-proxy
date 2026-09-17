@@ -80,6 +80,9 @@ export function prepareToolRequest(input: unknown, defaultModel: string) {
   } else if (typeof choice === "string" && ["none", "auto", "required"].includes(choice)) mode = choice;
   else throw new ToolError("tool_choice must be none, auto, required or a supplied function name");
   if (mode === "required" && !tools.length) throw new ToolError("tool_choice requires tools");
+  if (model === "claude-fable-5-1" && mode === "required") {
+    throw new ToolError("Claude Fable 5.1 does not support required or named tool_choice; use auto");
+  }
   const system: string[] = [], messages: Obj[] = [];
   const pending = new Set<string>(), seen = new Set<string>();
   for (const message of input.messages) {
@@ -89,6 +92,18 @@ export function prepareToolRequest(input: unknown, defaultModel: string) {
     const content = text(message.content, role === "assistant");
     if (role === "system" || role === "developer") { system.push(content); continue; }
     let blocks: Obj[] = [];
+    if (role === "assistant" && message.reasoning_details !== undefined) {
+      if (!Array.isArray(message.reasoning_details)) throw new ToolError("Invalid reasoning_details");
+      // Hermes preserves these opaque, signed native blocks across tool turns.
+      // Never reconstruct signatures or turn reasoning prose into a tool call.
+      for (const detail of message.reasoning_details) {
+        if (record(detail) && detail.type === "thinking" && typeof detail.thinking === "string" && typeof detail.signature === "string") {
+          blocks.push({ type: "thinking", thinking: detail.thinking, signature: detail.signature });
+        } else if (record(detail) && detail.type === "redacted_thinking" && typeof detail.data === "string") {
+          blocks.push({ type: "redacted_thinking", data: detail.data });
+        } else throw new ToolError("Unsupported reasoning_details block");
+      }
+    }
     if (role === "tool") {
       if (typeof message.tool_call_id !== "string" || !pending.delete(message.tool_call_id)) {
         throw new ToolError("Tool result must match an outstanding tool_call_id");
@@ -189,6 +204,7 @@ export async function collectToolResponse(response: Response, prepared: ReturnTy
   const prompt = message.usage.input_tokens + (message.usage.cache_read_input_tokens ?? 0) + (message.usage.cache_creation_input_tokens ?? 0);
   const completion = message.usage.output_tokens;
   const calls: Obj[] = [], ids = new Set<string>();
+  const reasoningDetails = message.content.filter(b => b.type === "thinking" || b.type === "redacted_thinking");
   let content = "";
   for (const b of message.content) {
     if (b.type === "text") content += b.text ?? "";
@@ -207,6 +223,7 @@ export async function collectToolResponse(response: Response, prepared: ReturnTy
   if (!calls.length && !["end_turn", "stop_sequence", "max_tokens", "refusal"].includes(finish ?? "")) throw new ToolError("Unsupported upstream stop reason", 502);
   return { id: `chatcmpl-${crypto.randomUUID()}`, object: "chat.completion", created: Math.floor(Date.now() / 1000),
     model: prepared.request.model, choices: [{ index: 0, message: { role: "assistant", content: content || null,
+      ...(reasoningDetails.length ? { reasoning_details: reasoningDetails } : {}),
       ...(calls.length ? { tool_calls: calls } : {}) },
       finish_reason: calls.length ? "tool_calls" : finish === "max_tokens" ? "length" : finish === "refusal" ? "content_filter" : "stop" }],
     usage: { prompt_tokens: prompt, completion_tokens: completion, total_tokens: prompt + completion } };
@@ -232,6 +249,7 @@ export function createToolHandler(transport: Transport, defaultModel: string): R
       const emit = (delta: Obj, finish: string | null = null) => res.write(`data: ${JSON.stringify({ ...base,
         choices: [{ index: 0, delta, finish_reason: finish }], ...(prepared.includeUsage ? { usage: null } : {}) })}\n\n`);
       emit({ role: "assistant", content: "" });
+      if (choices[0].message.reasoning_details) emit({ reasoning_details: choices[0].message.reasoning_details });
       if (choices[0].message.content) emit({ content: choices[0].message.content });
       choices[0].message.tool_calls?.forEach((call: Obj, index: number) => emit({ tool_calls: [{ index, ...call }] }));
       emit({}, choices[0].finish_reason);

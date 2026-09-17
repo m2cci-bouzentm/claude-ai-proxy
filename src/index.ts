@@ -9,7 +9,7 @@ import { AUTH_FILE, getAuth } from "./auth";
 const app = express();
 app.use(cors());
 // Larger agent histories are opt-in; preserve the legacy parser's 100 KiB limit.
-app.use("/tools/v1/chat/completions", express.json({ limit: "2mb" }));
+app.use("/tools/v1/chat/completions", express.json({ limit: "32mb" }));
 app.use(express.json());
 
 const API_KEY = process.env.API_KEY;
