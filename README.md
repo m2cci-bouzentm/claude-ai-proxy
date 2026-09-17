@@ -44,6 +44,53 @@ Works with any OpenAI SDK — just change `base_url` to `http://your-vps:4181/v1
 | GET | `/health` | No | Token status and subscription info |
 | GET | `/v1/models` | No | List available models |
 | POST | `/v1/chat/completions` | Yes | OpenAI-compatible completions (streaming supported) |
+| GET | `/tools/v1/models` | No | Same model list for tool-capable clients |
+| POST | `/tools/v1/chat/completions` | Yes | Opt-in native tool calling, JSON or buffered SSE |
+
+### Tool-capable clients (Hermes, OpenAI SDK)
+
+Use `http://your-vps:4181/tools/v1` as the client's base URL, with the same API key
+and model. Existing clients keep `http://your-vps:4181/v1`; the original request
+conversion, response format, streaming and authentication behavior are unchanged.
+
+```bash
+curl http://your-vps:4181/tools/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"Echo hello using the tool."}],"tools":[{"type":"function","function":{"name":"echo","parameters":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}}}],"tool_choice":"required"}'
+```
+
+The response contains `message.tool_calls` and `finish_reason: "tool_calls"`.
+The client executes the tool, appends that assistant message plus one
+`{"role":"tool","tool_call_id":"...","content":"..."}` per call, and sends the
+updated conversation to the same endpoint. The proxy never executes tools.
+
+- `tool_choice`: `auto`, `none`, `required`, or a named function; optional
+  `parallel_tool_calls: false` limits the turn to one call.
+- Full draft-07 parameter schemas are forwarded and validated with **Ajv**.
+  No type coercion, argument repair, remote schema fetching, or prose scanning.
+  Unknown tools and invalid arguments fail with an error rather than executing.
+- System/developer instructions and tool-result IDs are preserved on this route.
+- `stream: true` returns OpenAI SSE, with stable IDs, indexed calls, finish reason,
+  `[DONE]`, and optional `stream_options.include_usage`. The whole upstream turn
+  is buffered before emitting SSE so all calls can be validated first. This adds
+  time to the first emitted chunk; it is not live token streaming.
+- Requests are limited to 2 MiB, upstream responses to 8 MiB, and upstream time to
+  120 seconds. Client disconnects abort the new route's upstream request.
+- Text messages only; `n=1`. `response_format` and legacy `functions`/`function_call`
+  are rejected. Adaptive thinking is not enabled on this route because forced
+  tool selection is incompatible with it. Existing-route thinking is unchanged.
+
+Implementation references: [ToolBridge](https://github.com/Oct4Pie/toolbridge)
+demonstrates an isolated tool translation layer, and
+[LLM-Rosetta](https://github.com/Oaklight/llm-rosetta) separates provider formats.
+Their text-emulation/parsing code is unnecessary here: this proxy already calls
+Claude's native Messages API. Instead, the existing **official Anthropic SDK**
+handles SSE decoding, stream errors, incremental JSON and message assembly; Ajv
+handles schema validation. Custom code is limited to request/response mapping,
+tool-choice checks and the Express route. No additional LLM service is involved.
+
+Run `npm test` for route, compatibility, schema, streaming and cancellation tests.
 
 ## Environment variables
 

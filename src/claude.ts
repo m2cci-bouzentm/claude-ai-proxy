@@ -131,3 +131,22 @@ export async function createStreamingResponse(
 ): Promise<Response> {
   return callAPI(messages, model, maxTokens);
 }
+
+// The opt-in tool route shares auth and transport identity, never the legacy
+// text conversion/parser. Keep callAPI and both existing exports unchanged.
+export async function createToolResponse(
+  request: Record<string, unknown>, signal: AbortSignal,
+): Promise<Response> {
+  const auth = await getAuth();
+  const clientSystem = request.system as string | undefined;
+  const system = clientSystem
+    ? [...(Array.isArray(SYSTEM_PROMPT) ? SYSTEM_PROMPT : [{ type: "text", text: SYSTEM_PROMPT }]),
+       { type: "text", text: clientSystem }]
+    : SYSTEM_PROMPT;
+  return fetch(API_URL, {
+    method: "POST",
+    headers: buildHeaders(auth),
+    body: JSON.stringify({ ...request, system, stream: true, metadata: buildMetadata() }),
+    signal,
+  });
+}

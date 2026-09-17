@@ -2,11 +2,14 @@ import express from "express";
 import cors from "cors";
 import "dotenv/config";
 
-import { createCompletion, createStreamingResponse } from "./claude";
+import { createCompletion, createStreamingResponse, createToolResponse } from "./claude";
+import { createToolHandler } from "./tool-route";
 import { AUTH_FILE, getAuth } from "./auth";
 
 const app = express();
 app.use(cors());
+// Larger agent histories are opt-in; preserve the legacy parser's 100 KiB limit.
+app.use("/tools/v1/chat/completions", express.json({ limit: "2mb" }));
 app.use(express.json());
 
 const API_KEY = process.env.API_KEY;
@@ -33,7 +36,7 @@ app.get("/health", async (_req, res) => {
   }
 });
 
-app.get("/v1/models", (_req, res) => {
+app.get(["/v1/models", "/tools/v1/models"], (_req, res) => {
   res.json({
     object: "list",
     data: [
@@ -133,6 +136,8 @@ app.post("/v1/chat/completions", auth, async (req, res) => {
     res.status(500).json({ error: { message, type: "server_error" } });
   }
 });
+
+app.post("/tools/v1/chat/completions", auth, createToolHandler(createToolResponse, DEFAULT_MODEL));
 
 app.listen(PORT, () => {
   console.log(`claude-ai-proxy listening on :${PORT}`);
