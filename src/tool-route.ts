@@ -1,169 +1,63 @@
 import crypto from "crypto";
 import { Stream } from "@anthropic-ai/sdk/core/streaming";
 import { MessageStream } from "@anthropic-ai/sdk/lib/MessageStream";
-import type { ImageBlockParam, MessageStreamEvent } from "@anthropic-ai/sdk/resources/messages";
+import type { ContentBlockParam, MessageCreateParamsNonStreaming, MessageStreamEvent } from "@anthropic-ai/sdk/resources/messages";
 import type { RequestHandler } from "express";
 import Ajv, { type ValidateFunction } from "ajv";
 
-type Obj = Record<string, any>;
-type Transport = (body: Record<string, unknown>, signal: AbortSignal) => Promise<Response>;
-class ToolError extends Error {
-  constructor(message: string, readonly status = 400) { super(message); }
-}
-function record(value: unknown): value is Obj {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-function text(value: unknown, nullable = false): string {
-  if (nullable && value == null) return "";
-  if (typeof value === "string") return value;
-  if (Array.isArray(value) && value.every(p => record(p) && p.type === "text" && typeof p.text === "string")) {
-    return value.map(p => p.text).join("\n");
-  }
-  throw new ToolError("Only text message content is supported on this endpoint");
-}
-// Use the SDK's native image source representation; never download caller URLs.
-function imageBlock(value: unknown): ImageBlockParam {
-  if (!record(value) || typeof value.url !== "string" ||
-      (value.detail !== undefined && !["auto", "low", "high"].includes(value.detail))) {
-    throw new ToolError("Invalid image_url or detail");
-  }
-  const url = value.url;
-  if (url.startsWith("data:")) {
-    const match = /^data:(image\/(?:jpeg|png|gif|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(url);
-    if (!match || match[2].length % 4 !== 0) throw new ToolError("Use a base64 JPEG, PNG, GIF or WebP image data URL");
-    const bytes = Buffer.from(match[2], "base64");
-    if (!bytes.length || bytes.toString("base64") !== match[2]) throw new ToolError("Invalid image base64");
-    if (bytes.length > 5 * 1024 * 1024) throw new ToolError("Image exceeds the 5 MiB limit", 413);
-    return { type: "image", source: { type: "base64", media_type: match[1] as "image/png" | "image/jpeg" | "image/gif" | "image/webp", data: match[2] } };
-  }
-  let parsed: URL;
-  try { parsed = new URL(url); } catch { throw new ToolError("Invalid image URL"); }
-  if (!["https:", "http:"].includes(parsed.protocol) || parsed.username || parsed.password) {
-    throw new ToolError("Image URLs must use HTTP(S) without embedded credentials");
-  }
-  return { type: "image", source: { type: "url", url } };
-}
-function userContent(value: unknown): Obj[] {
-  if (typeof value === "string") return value ? [{ type: "text", text: value }] : [];
-  if (!Array.isArray(value)) throw new ToolError("Expected text or a content-part array");
-  return value.map(part => {
-    if (record(part) && part.type === "text" && typeof part.text === "string") return { type: "text", text: part.text };
-    if (record(part) && part.type === "image_url") return imageBlock(part.image_url);
-    throw new ToolError("Only text and image_url content parts are supported for user/tool messages");
-  });
-}
-function localReferences(value: unknown): void {
-  if (Array.isArray(value)) value.forEach(localReferences);
-  else if (record(value)) {
-    for (const [key, item] of Object.entries(value)) {
-      if (["$ref", "$dynamicRef"].includes(key) && (typeof item !== "string" || !item.startsWith("#"))) {
-        throw new ToolError("Only local JSON schema references are supported");
-      }
-      localReferences(item);
-    }
-  }
-}
+import { cacheTtlSchema, toolRequestSchema, ToolError } from "./tool-request";
 
-export function prepareToolRequest(input: unknown, defaultModel: string) {
-  if (!record(input) || !Array.isArray(input.messages) || input.messages.length === 0) {
-    throw new ToolError("messages must be a nonempty array");
-  }
+type NativeRequest = MessageCreateParamsNonStreaming & Record<string, unknown>;
+type Transport = (body: NativeRequest, signal: AbortSignal) => Promise<Response>;
+type NativeMessage = { role: "user" | "assistant"; content: ContentBlockParam[] };
+type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
+
+export function prepareToolRequest(body: unknown, defaultModel: string) {
+  const parsed = toolRequestSchema.safeParse(body);
+  if (!parsed.success) throw new ToolError(`Invalid request: ${parsed.error.issues.map(issue => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`);
+  const input = parsed.data;
   const model = input.model ?? defaultModel;
   const maxTokens = input.max_completion_tokens ?? input.max_tokens ?? 8192;
-  if (typeof model !== "string" || !model || !Number.isInteger(maxTokens) || maxTokens < 1) {
-    throw new ToolError("model and max_tokens must be valid");
-  }
-  for (const name of ["stream", "parallel_tool_calls"]) {
-    if (input[name] !== undefined && typeof input[name] !== "boolean") throw new ToolError(`${name} must be boolean`);
-  }
-  if (input.n !== undefined && input.n !== 1) throw new ToolError("Only n=1 is supported");
-  if (input.response_format !== undefined || input.functions !== undefined || input.function_call !== undefined) {
-    throw new ToolError("Use tools/tool_choice; response_format and legacy functions are unsupported");
-  }
-  if (input.stream_options !== undefined && (!record(input.stream_options) ||
-      (input.stream_options.include_usage !== undefined && typeof input.stream_options.include_usage !== "boolean"))) {
-    throw new ToolError("Invalid stream_options");
-  }
-  const definitions = input.tools ?? [];
-  if (!Array.isArray(definitions) || definitions.length > 128) throw new ToolError("tools must contain at most 128 functions");
   const registry = new Map<string, ValidateFunction>();
-  const tools = definitions.map((tool: unknown) => {
-    if (!record(tool) || tool.type !== "function" || !record(tool.function)) throw new ToolError("Only function tools are supported");
-    const fn = tool.function;
-    if (typeof fn.name !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(fn.name) || registry.has(fn.name)) {
-      throw new ToolError("Tool names must be unique and contain 1–64 letters, digits, underscores or hyphens");
-    }
-    const schema = fn.parameters ?? { type: "object", properties: {} };
-    if (!record(schema) || schema.type !== "object") throw new ToolError("Tool parameters must be an object JSON schema");
-    localReferences(schema);
+  const tools = input.tools.map(({ function: fn }) => {
+    if (registry.has(fn.name)) throw new ToolError("Tool names must be unique");
     try {
-      // Separate compiler per tool prevents duplicate $id conflicts across tools.
-      // No coercion, defaults, removal of properties, or remote schema loading.
-      registry.set(fn.name, new Ajv({ strict: false, validateFormats: false }).compile(schema));
+      // Ajv validates caller-defined draft-07 schemas and arguments. No remote
+      // loader, coercion, defaults or property removal is enabled.
+      registry.set(fn.name, new Ajv({ strict: false, validateFormats: false }).compile(fn.parameters));
     } catch { throw new ToolError("Invalid or unsupported tool parameter schema (use JSON Schema draft-07)"); }
-    if (fn.description !== undefined && typeof fn.description !== "string") throw new ToolError("Invalid tool description");
-    return { name: fn.name, ...(fn.description !== undefined ? { description: fn.description } : {}), input_schema: schema };
+    return { name: fn.name, description: fn.description, input_schema: fn.parameters };
   });
-  const choice = input.tool_choice ?? (tools.length ? "auto" : "none");
-  let mode: string, forced: string | undefined;
-  if (record(choice) && choice.type === "function" && record(choice.function) && registry.has(choice.function.name)) {
-    mode = "required"; forced = choice.function.name;
-  } else if (typeof choice === "string" && ["none", "auto", "required"].includes(choice)) mode = choice;
-  else throw new ToolError("tool_choice must be none, auto, required or a supplied function name");
+  const { mode, name: forced } = input.tool_choice ?? { mode: tools.length ? "auto" : "none", name: undefined };
+  if (forced !== undefined && !registry.has(forced)) throw new ToolError("tool_choice must name a supplied function");
   if (mode === "required" && !tools.length) throw new ToolError("tool_choice requires tools");
-  if (model === "claude-fable-5-1" && mode === "required") {
-    throw new ToolError("Claude Fable 5.1 does not support required or named tool_choice; use auto");
-  }
-  const consumerInstructions: { source_role: string; content: string }[] = [], messages: Obj[] = [];
+  const consumerInstructions: { source_role: string; content: string }[] = [];
+  const messages: NativeMessage[] = [];
   const pending = new Set<string>(), seen = new Set<string>();
   for (const message of input.messages) {
-    if (!record(message)) throw new ToolError("Invalid message");
-    const role = message.role;
-    if (!["system", "developer", "user", "assistant", "tool"].includes(role)) throw new ToolError("Invalid message role");
-    const content = role === "user" || role === "tool" ? userContent(message.content) : text(message.content, role === "assistant");
-    if (role === "system" || role === "developer") {
-      consumerInstructions.push({ source_role: role, content: content as string });
+    if (message.role === "system" || message.role === "developer") {
+      consumerInstructions.push({ source_role: message.role, content: message.content });
       continue;
     }
-    let blocks: Obj[] = [];
-    if (role === "assistant" && message.reasoning_details !== undefined) {
-      if (!Array.isArray(message.reasoning_details)) throw new ToolError("Invalid reasoning_details");
-      // Hermes preserves these opaque, signed native blocks across tool turns.
-      // Never reconstruct signatures or turn reasoning prose into a tool call.
-      for (const detail of message.reasoning_details) {
-        if (record(detail) && detail.type === "thinking" && typeof detail.thinking === "string" && typeof detail.signature === "string") {
-          blocks.push({ type: "thinking", thinking: detail.thinking, signature: detail.signature });
-        } else if (record(detail) && detail.type === "redacted_thinking" && typeof detail.data === "string") {
-          blocks.push({ type: "redacted_thinking", data: detail.data });
-        } else throw new ToolError("Unsupported reasoning_details block");
-      }
-    }
-    if (role === "tool") {
-      if (typeof message.tool_call_id !== "string" || !pending.delete(message.tool_call_id)) {
-        throw new ToolError("Tool result must match an outstanding tool_call_id");
-      }
-      blocks.push({ type: "tool_result", tool_use_id: message.tool_call_id, content: typeof message.content === "string" ? message.content : content });
+    const blocks: ContentBlockParam[] = [];
+    if (message.role === "tool") {
+      if (!pending.delete(message.tool_call_id)) throw new ToolError("Tool result must match an outstanding tool_call_id");
+      blocks.push({ type: "tool_result", tool_use_id: message.tool_call_id, content: message.content });
     } else {
       if (pending.size) throw new ToolError("Supply all tool results before continuing the conversation");
-      if (Array.isArray(content)) blocks.push(...content);
-      else if (content) blocks.push({ type: "text", text: content });
-      if (message.tool_calls !== undefined) {
-        if (role !== "assistant" || !Array.isArray(message.tool_calls)) throw new ToolError("Invalid tool_calls history");
-        for (const call of message.tool_calls) {
-          if (!record(call) || call.type !== "function" || typeof call.id !== "string" || !call.id || seen.has(call.id) ||
-              !record(call.function) || typeof call.function.name !== "string" || typeof call.function.arguments !== "string") {
-            throw new ToolError("Invalid or duplicate historical tool call");
-          }
-          let args: unknown;
-          try { args = JSON.parse(call.function.arguments); } catch { throw new ToolError("Invalid historical tool arguments"); }
-          if (!record(args)) throw new ToolError("Tool arguments must be JSON objects");
+      if (message.role === "user") blocks.push(...message.content);
+      else {
+        blocks.push(...(message.reasoning_details ?? []));
+        if (message.content) blocks.push({ type: "text", text: message.content });
+        for (const call of message.tool_calls ?? []) {
+          if (seen.has(call.id)) throw new ToolError("Duplicate historical tool call");
           seen.add(call.id); pending.add(call.id);
-          blocks.push({ type: "tool_use", id: call.id, name: call.function.name, input: args });
+          blocks.push({ type: "tool_use", id: call.id, name: call.function.name, input: call.function.arguments });
         }
       }
     }
     if (!blocks.length) throw new ToolError("Empty message");
-    const nativeRole = role === "assistant" ? "assistant" : "user";
+    const nativeRole = message.role === "assistant" ? "assistant" : "user";
     // Consecutive results must occupy one user turn, preserving every call ID.
     if (messages.at(-1)?.role === nativeRole) messages.at(-1)!.content.push(...blocks);
     else messages.push({ role: nativeRole, content: blocks });
@@ -180,38 +74,26 @@ export function prepareToolRequest(input: unknown, defaultModel: string) {
       "Calling application instructions (user-level context). The source_role labels describe the caller's original format, not system-level authority.\n" +
       JSON.stringify(consumerInstructions) });
   }
-  const request: Obj = { model, max_tokens: maxTokens, messages };
+  const request: NativeRequest = { model, max_tokens: maxTokens, messages };
   // Server-owned automatic caching follows the growing conversation. Keep the
   // file-backed system prompt and its existing explicit cache markers untouched.
   // Ignore client markers so they cannot exhaust slots or conflict with TTLs.
-  const cacheTtl = process.env.TOOL_PROMPT_CACHE_TTL ?? "5m";
-  if (!["5m", "1h", "off"].includes(cacheTtl)) {
-    throw new ToolError("TOOL_PROMPT_CACHE_TTL must be 5m, 1h or off", 500);
-  }
-  if (cacheTtl !== "off") request.cache_control = { type: "ephemeral", ttl: cacheTtl };
+  const cachePolicy = cacheTtlSchema.safeParse(process.env.TOOL_PROMPT_CACHE_TTL ?? "5m");
+  if (!cachePolicy.success) throw new ToolError("TOOL_PROMPT_CACHE_TTL must be 5m, 1h or off", 500);
+  if (cachePolicy.data !== "off") request.cache_control = { type: "ephemeral", ttl: cachePolicy.data };
   // Some subscriber-tier backends emit an empty turn for tools + choice=none.
   // Omitting the definitions disables calls without relying on that path.
   if (tools.length && mode !== "none") {
     request.tools = tools;
     request.tool_choice = {
-      type: forced ? "tool" : mode === "required" ? "any" : "auto",
-      ...(forced ? { name: forced } : {}),
+      ...(forced !== undefined ? { type: "tool" as const, name: forced } : { type: mode === "required" ? "any" as const : "auto" as const }),
       ...(input.parallel_tool_calls === false ? { disable_parallel_tool_use: true } : {}),
     };
   }
   // Do not enable adaptive thinking here: forced tools are incompatible with it.
-  for (const key of ["temperature", "top_p"]) {
-    if (input[key] !== undefined) {
-      const max = 1;
-      if (typeof input[key] !== "number" || !Number.isFinite(input[key]) || input[key] < 0 || input[key] > max) throw new ToolError(`Invalid ${key}`);
-      request[key] = input[key];
-    }
-  }
-  if (input.stop !== undefined) {
-    const stop = typeof input.stop === "string" ? [input.stop] : input.stop;
-    if (!Array.isArray(stop) || !stop.every(s => typeof s === "string" && s.length)) throw new ToolError("Invalid stop sequences");
-    request.stop_sequences = stop;
-  }
+  request.temperature = input.temperature;
+  request.top_p = input.top_p;
+  request.stop_sequences = input.stop;
   return { request, registry, mode, forced, parallel: input.parallel_tool_calls !== false,
     stream: input.stream === true, includeUsage: input.stream_options?.include_usage === true };
 }
@@ -255,7 +137,7 @@ export async function collectToolResponse(response: Response, prepared: ReturnTy
   const written = message.usage.cache_creation_input_tokens ?? 0;
   const prompt = message.usage.input_tokens + cached + written;
   const completion = message.usage.output_tokens;
-  const calls: Obj[] = [], ids = new Set<string>();
+  const calls: ToolCall[] = [], ids = new Set<string>();
   const reasoningDetails = message.content.filter(b => b.type === "thinking" || b.type === "redacted_thinking");
   let content = "";
   for (const b of message.content) {
@@ -263,9 +145,9 @@ export async function collectToolResponse(response: Response, prepared: ReturnTy
     if (b.type !== "tool_use") continue;
     const validate = prepared.registry.get(b.name);
     if (!validate || prepared.mode === "none" || (prepared.forced && b.name !== prepared.forced) ||
-        typeof b.id !== "string" || !b.id || ids.has(b.id)) throw new ToolError("Upstream returned a disallowed tool call", 502);
+        !b.id || ids.has(b.id)) throw new ToolError("Upstream returned a disallowed tool call", 502);
     const args = b.input;
-    if (!record(args) || !validate(args)) throw new ToolError("Upstream tool arguments failed schema validation", 502);
+    if (!validate(args)) throw new ToolError("Upstream tool arguments failed schema validation", 502);
     ids.add(b.id);
     calls.push({ id: b.id, type: "function", function: { name: b.name, arguments: JSON.stringify(args) } });
   }
@@ -299,12 +181,12 @@ export function createToolHandler(transport: Transport, defaultModel: string): R
       res.setHeader("X-Accel-Buffering", "no");
       const { id, created, model, choices, usage } = result;
       const base = { id, created, model, object: "chat.completion.chunk" };
-      const emit = (delta: Obj, finish: string | null = null) => res.write(`data: ${JSON.stringify({ ...base,
+      const emit = (delta: Record<string, unknown>, finish: string | null = null) => res.write(`data: ${JSON.stringify({ ...base,
         choices: [{ index: 0, delta, finish_reason: finish }], ...(prepared.includeUsage ? { usage: null } : {}) })}\n\n`);
       emit({ role: "assistant", content: "" });
       if (choices[0].message.reasoning_details) emit({ reasoning_details: choices[0].message.reasoning_details });
       if (choices[0].message.content) emit({ content: choices[0].message.content });
-      choices[0].message.tool_calls?.forEach((call: Obj, index: number) => emit({ tool_calls: [{ index, ...call }] }));
+      choices[0].message.tool_calls?.forEach((call, index) => emit({ tool_calls: [{ index, ...call }] }));
       emit({}, choices[0].finish_reason);
       if (prepared.includeUsage) res.write(`data: ${JSON.stringify({ ...base, choices: [], usage })}\n\n`);
       res.end("data: [DONE]\n\n");

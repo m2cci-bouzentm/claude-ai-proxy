@@ -44,7 +44,7 @@ test('tool round trip preserves schemas, IDs, consumer instructions at user leve
   const follow = prepareToolRequest(request({ messages: [...request().messages, assistant,
     { role: 'tool', tool_call_id: assistant.tool_calls[0].id, content: 'café' }] }), 'fallback');
   assert.deepEqual(follow.request.messages[1].content[0], { type: 'tool_use', id: 'toolu_one', name: 'echo', input: { text: 'café' } });
-  assert.equal(follow.request.messages[2].content[0].tool_use_id, 'toolu_one');
+  assert.deepEqual(follow.request.messages[2].content[0], { type: 'tool_result', tool_use_id: 'toolu_one', content: 'café' });
   const final = await collectToolResponse(fixture({ calls: [] }), follow);
   assert.equal(final.choices[0].message.content, 'done café');
   const two = await collectToolResponse(fixture({ calls: [
@@ -64,7 +64,10 @@ test('constraints reject malformed, unknown, truncated or forbidden calls', asyn
   const disabled = prepareToolRequest(request({ tool_choice: 'none' }), 'fallback');
   assert.equal(disabled.request.tools, undefined);
   assert.equal(disabled.request.tool_choice, undefined);
-  assert.throws(() => prepareToolRequest(request({ model: 'claude-fable-5-1', tool_choice: 'required' }), 'fallback'), /use auto/);
+  for (const model of ['claude-fable-5-1', 'future-model']) {
+    assert.deepEqual(prepareToolRequest(request({ model, tool_choice: 'required' }), 'fallback').request.tool_choice, { type: 'any' });
+    assert.deepEqual(prepareToolRequest(request({ model, tool_choice: { type: 'function', function: { name: 'echo' } } }), 'fallback').request.tool_choice, { type: 'tool', name: 'echo' });
+  }
   const thinking = { type: 'thinking', thinking: 'Signed reasoning', signature: 'opaque-signature' };
   const preserved = prepareToolRequest(request({ messages: [...request().messages, { role: 'assistant', content: 'done', reasoning_details: [thinking] }, { role: 'user', content: 'continue' }] }), 'fallback');
   assert.deepEqual(preserved.request.messages[1].content[0], thinking);
@@ -173,4 +176,51 @@ test('images preserve ordering, user-level instructions and tool-result history'
   for (const role of ['system', 'developer', 'assistant']) {
     assert.throws(() => prepareToolRequest(request({ messages: [{ role, content: [img] }, { role: 'user', content: 'hi' }] }), 'fallback'));
   }
+});
+
+
+test('request boundary rejects invalid shapes without coercion or forwarding', async () => {
+  let forwarded = 0;
+  const app = express(); app.use(express.json());
+  app.post('/', createToolHandler(async () => { forwarded++; return fixture(); }, 'fallback'));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  try {
+    for (const extra of [
+      { messages: [] }, { messages: [{ role: 'invalid', content: 'hi' }] },
+      { messages: [{ role: 'user', content: 42 }] }, { stream: 'true' },
+      { max_tokens: '100' }, { temperature: 2 }, { stream_options: { include_usage: 1 } },
+      { tools: [{ type: 'function', function: { name: 42 } }] },
+      { response_format: { type: 'json_object' } },
+      { messages: [...request().messages, { role: 'assistant', content: null,
+        tool_calls: [{ id: 'a', type: 'function', function: { name: 'echo', arguments: '[]' } }] }] },
+      { messages: [...request().messages, { role: 'assistant', content: 'hi',
+        reasoning_details: [{ type: 'thinking', thinking: 'text', signature: 1 }] }] },
+    ]) {
+      const response = await fetch(`http://127.0.0.1:${server.address().port}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request(extra)),
+      });
+      assert.equal(response.status, 400, JSON.stringify(extra));
+      assert.equal((await response.json()).error.type, 'invalid_request_error');
+    }
+    assert.equal(forwarded, 0);
+  } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+});
+
+test('schema normalization preserves text, options and local parameter references', async () => {
+  const parameters = { type: 'object', definitions: { text: { type: 'string' } },
+    properties: { text: { $ref: '#/definitions/text' } }, required: ['text'] };
+  const p = prepareToolRequest(request({
+    tools: [{ type: 'function', function: { name: 'echo', parameters } }],
+    messages: [{ role: 'system', content: [{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }] },
+      ...request().messages], stop: 'END', temperature: 0, top_p: 1, max_completion_tokens: 100,
+  }), 'fallback');
+  assert.deepEqual(p.request.tools[0].input_schema, parameters);
+  assert.match(p.request.messages[0].content[0].text, /first\\nsecond/);
+  assert.deepEqual(p.request.stop_sequences, ['END']);
+  assert.equal(p.request.max_tokens, 100);
+  assert.equal(p.request.temperature, 0);
+  assert.equal(p.request.top_p, 1);
+  await collectToolResponse(fixture(), p);
+  await assert.rejects(collectToolResponse(fixture({ calls: [{ id: 'a', name: 'echo', input: { text: 1 } }] }), p));
 });

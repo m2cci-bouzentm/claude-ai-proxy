@@ -88,10 +88,10 @@ The standard API IDs `claude-opus-4-6`, `claude-opus-4-8`, `claude-opus-5`, and
 `claude-fable-5-1` support 1M context by default; no `[1m]` suffix or beta header is
 needed. Set the client's context length to `1000000`. See
 [Anthropic's context documentation](https://platform.claude.com/docs/en/build-with-claude/context-windows).
-Fable 5.1 only supports automatic tool selection (or no tools), not forced/named
-calls. Its signed thinking blocks, when returned, are preserved as
+Model capabilities are validated by upstream; the proxy has no model-specific
+tool-choice restrictions. Signed thinking blocks, when returned, are preserved as
 `reasoning_details` in JSON and SSE and must be replayed unchanged by the client.
-The opt-in route uses the 2.1.251 client protocol identity required by Fable 5.1;
+The opt-in route uses the 2.1.251 client protocol identity;
 the existing route retains its previous identity and behavior. Model availability
 still depends on the authenticated account, and the model's token limit applies
 independently of the HTTP byte limit.
@@ -101,8 +101,9 @@ demonstrates an isolated tool translation layer, and
 [LLM-Rosetta](https://github.com/Oaklight/llm-rosetta) separates provider formats.
 Their text-emulation/parsing code is unnecessary here: this proxy already calls
 Claude's native Messages API. Instead, the existing **official Anthropic SDK**
-handles SSE decoding, stream errors, incremental JSON and message assembly; Ajv
-handles schema validation. Custom code is limited to request/response mapping,
+handles SSE decoding, stream errors, incremental JSON and message assembly.
+**Zod** validates and normalizes incoming requests into typed data; **Ajv** validates
+caller-provided draft-07 tool schemas and generated arguments. Custom code is limited to request/response mapping,
 tool-choice checks and the Express route. No additional LLM service is involved.
 
 Run `npm test` for route, compatibility, schema, streaming and cancellation tests.

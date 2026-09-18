@@ -138,8 +138,8 @@ export async function createToolResponse(
   request: Record<string, unknown>, signal: AbortSignal,
 ): Promise<Response> {
   const auth = await getAuth();
-  // Fable 5.1 requires the 2.1.251 client protocol identity. Update only the
-  // opt-in transport's trusted billing preamble; legacy headers/prompt stay intact.
+  // Keep the opt-in transport identity consistent with its trusted billing
+  // preamble; legacy headers and prompt retain their existing version.
   const toolClientVersion = "2.1.251";
   const system = (Array.isArray(SYSTEM_PROMPT) ? SYSTEM_PROMPT : [{ type: "text", text: SYSTEM_PROMPT }])
     .map((block: { type: string; text?: string }) => block.type === "text" && block.text?.startsWith("x-anthropic-billing-header:")
