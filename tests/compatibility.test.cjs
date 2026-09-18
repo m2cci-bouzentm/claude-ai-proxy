@@ -11,7 +11,7 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
   const preload = path.join(tmp, 'preload.cjs');
   fs.writeFileSync(preload, `
     const fs = require('node:fs');
-    require(${JSON.stringify(path.resolve('dist/auth.js'))}).getAuth = async () => ({ accessToken: 'test-only', subscriptionType: 'test', rateLimitTier: 'test' });
+    require(${JSON.stringify(path.resolve('dist/services/auth.service.js'))}).getAuth = async () => ({ accessToken: 'test-only', subscriptionType: 'test', rateLimitTier: 'test' });
     global.fetch = async (_url, options) => {
       const body = JSON.parse(options.body);
       fs.appendFileSync(${JSON.stringify(capture)}, JSON.stringify(body) + '\\n');
@@ -78,6 +78,17 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     assert.match(requests[2].system.find(b => b.text?.startsWith('x-anthropic-billing-header:')).text, /cc_version=2\.1\.251/);
     assert.deepEqual(await (await fetch(url + '/v1/models')).json(), await (await fetch(url + '/tools/v1/models')).json());
     assert.equal((await (await post('/v1/chat/completions', {})).json()).error.message, 'messages is required');
+    assert.equal((await fetch(url + '/v1/chat/completions')).status, 404);
+    assert.equal((await fetch(url + '/v1/chat/completions/extra', { method: 'POST' })).status, 404);
+    assert.equal((await fetch(url + '/health')).status, 200);
+    const legacyOptions = { model: 'claude-haiku-4-5-20251001', max_tokens: 17, max_completion_tokens: 29,
+      messages: [{ role: 'system', content: 'ignored' }, { role: 'developer', content: 'caller context' },
+        { role: 'user', content: [{ type: 'text', text: 'one' }, { type: 'image_url', image_url: { url: 'unused' } }, { type: 'text', text: 'two' }] }] };
+    assert.equal((await post('/v1/chat/completions', legacyOptions)).status, 200);
+    const lastRequest = JSON.parse(fs.readFileSync(capture, 'utf8').trim().split('\n').at(-1));
+    assert.equal(lastRequest.max_tokens, 17);
+    assert.equal(lastRequest.thinking, undefined);
+    assert.deepEqual(lastRequest.messages, [{ role: 'user', content: 'caller context' }, { role: 'user', content: 'one\ntwo' }]);
     const large = { ...body, messages: [{ role: 'user', content: 'x'.repeat(3 * 1024 * 1024) }] };
     assert.equal((await post('/v1/chat/completions', large)).status, 413);
     assert.equal((await post('/tools/v1/chat/completions', large)).status, 200);

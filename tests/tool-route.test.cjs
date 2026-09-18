@@ -1,7 +1,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
-const { prepareToolRequest, collectToolResponse, createToolHandler } = require('../dist/tool-route');
+const toolService = require('../dist/services/tool.service');
+const { collectToolResponse } = toolService;
+const { toolRequestSchema } = require('../dist/schemas/tool.schema');
+const { createToolRouter } = require('../dist/routes/tools');
+const prepareToolRequest = (body, defaultModel) => toolService.prepareToolRequest(toolRequestSchema.parse(body), defaultModel);
 
 const tool = { type: 'function', function: { name: 'echo', parameters: {
   type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false,
@@ -88,7 +92,7 @@ test('HTTP SSE uses stable IDs, usage, finish and DONE; disconnect aborts upstre
   const thinking = { type: 'thinking', thinking: 'Signed reasoning', signature: 'opaque-signature' };
   let aborted;
   const disconnected = new Promise(resolve => { aborted = resolve; });
-  app.post('/tools/v1/chat/completions', createToolHandler(async (body, signal) => {
+  app.use('/tools/v1', createToolRouter(async (body, signal) => {
     if (body.model === 'disconnect') {
       return new Promise((_resolve, reject) => signal.addEventListener('abort', () => { aborted(); reject(new Error('aborted')); }, { once: true }));
     }
@@ -182,7 +186,7 @@ test('images preserve ordering, user-level instructions and tool-result history'
 test('request boundary rejects invalid shapes without coercion or forwarding', async () => {
   let forwarded = 0;
   const app = express(); app.use(express.json());
-  app.post('/', createToolHandler(async () => { forwarded++; return fixture(); }, 'fallback'));
+  app.use('/', createToolRouter(async () => { forwarded++; return fixture(); }, 'fallback'));
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   try {
@@ -197,7 +201,7 @@ test('request boundary rejects invalid shapes without coercion or forwarding', a
       { messages: [...request().messages, { role: 'assistant', content: 'hi',
         reasoning_details: [{ type: 'thinking', thinking: 'text', signature: 1 }] }] },
     ]) {
-      const response = await fetch(`http://127.0.0.1:${server.address().port}`, {
+      const response = await fetch(`http://127.0.0.1:${server.address().port}/chat/completions`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request(extra)),
       });
       assert.equal(response.status, 400, JSON.stringify(extra));

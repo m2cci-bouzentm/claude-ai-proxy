@@ -1,6 +1,6 @@
 # claude-ai-proxy
 
-OpenAI-compatible API proxy that routes through your Claude Code subscription (Max/Pro) instead of API credits.
+OpenAI-compatible API proxy that routes through your Claude Code subscription (Max/Pro) instead of API credits. Compatible with **Hermes Agent** through the opt-in `/tools/v1` endpoint for native tools, images, and prompt caching. Existing consumers continue using `/v1` unchanged.
 
 ## Setup
 
@@ -80,7 +80,7 @@ updated conversation to the same endpoint. The proxy never executes tools.
   time to the first emitted chunk; it is not live token streaming.
 - Requests are limited to 32 MiB (to accommodate 1M-token contexts), upstream responses to 8 MiB, and upstream time to
   120 seconds. Client disconnects abort the new route's upstream request.
-- Text messages only; `n=1`. `response_format` and legacy `functions`/`function_call`
+- Text and image content in user/tool messages; `n=1`. `response_format` and legacy `functions`/`function_call`
   are rejected. Adaptive thinking is not enabled on this route because forced
   tool selection is incompatible with it. Existing-route thinking is unchanged.
 
@@ -107,6 +107,31 @@ caller-provided draft-07 tool schemas and generated arguments. Custom code is li
 tool-choice checks and the Express route. No additional LLM service is involved.
 
 Run `npm test` for route, compatibility, schema, streaming and cancellation tests.
+
+## Architecture
+
+The Express layout follows connectAI's AI service conventions:
+
+```text
+src/
+  config/       Environment settings and cache policy
+  routes/       Endpoint registration
+  middleware/   API authentication and Zod body validation
+  controllers/  HTTP responses, streaming, and request cancellation
+  services/     Tool conversation handling and OAuth lifecycle
+  schemas/      Runtime request/configuration schemas
+  types/        Shared contracts and schema-inferred TypeScript types
+  lib/          Claude transport, image conversion, and credential storage
+  errors/       Domain errors
+  utils/        Cancellation and HTTP error helpers
+  index.ts      Middleware, route registration, and server startup
+```
+
+The Hermes route validates at the boundary before passing typed data to its
+controller and service. Shared types are imported from `types/`; schemas remain
+the source of truth for inferred request types. The legacy route retains its
+original conversion, authentication, byte limit, JSON errors, and streaming
+behavior; it does not use the Hermes request schema.
 
 ## Environment variables
 
