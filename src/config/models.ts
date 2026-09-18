@@ -1,0 +1,11 @@
+export const modelIds = [
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-5-20250929",
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5",
+    "claude-fable-5",
+    "claude-fable-5-1",
+] as const;

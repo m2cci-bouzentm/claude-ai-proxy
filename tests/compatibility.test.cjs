@@ -76,7 +76,11 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     const oldBilling = requests[0].system.find(b => b.text?.startsWith('x-anthropic-billing-header:')).text;
     assert.match(oldBilling, /cc_version=2\.1\.160/);
     assert.match(requests[2].system.find(b => b.text?.startsWith('x-anthropic-billing-header:')).text, /cc_version=2\.1\.251/);
-    assert.deepEqual(await (await fetch(url + '/v1/models')).json(), await (await fetch(url + '/tools/v1/models')).json());
+    const models = await (await fetch(url + '/v1/models')).json();
+    assert.deepEqual(models, await (await fetch(url + '/tools/v1/models')).json());
+    for (const id of ['claude-opus-5', 'claude-fable-5', 'claude-fable-5-1']) {
+      assert.ok(models.data.some(model => model.id === id), `Missing Hermes-compatible model: ${id}`);
+    }
     assert.equal((await (await post('/v1/chat/completions', {})).json()).error.message, 'messages is required');
     assert.equal((await fetch(url + '/v1/chat/completions')).status, 404);
     assert.equal((await fetch(url + '/v1/chat/completions/extra', { method: 'POST' })).status, 404);
