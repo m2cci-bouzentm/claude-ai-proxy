@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { resolveModelId } from "../config/models";
 import fs from "fs";
 import { getAuth } from "../services/auth.service";
 import { config } from "../config";
@@ -109,7 +110,7 @@ async function callAPI(
     const auth = await getAuth();
 
     const body: Record<string, unknown> = {
-        model,
+        model: resolveModelId(model),
         max_tokens: maxTokens,
         messages: convertMessages(messages),
         system: SYSTEM_PROMPT,

@@ -80,10 +80,41 @@ updated conversation to the same endpoint. The proxy never executes tools.
   are rejected. Adaptive thinking is not enabled on this route because forced
   tool selection is incompatible with it. Existing-route thinking is unchanged.
 
-The standard API IDs `claude-opus-4-6`, `claude-opus-4-8`, `claude-opus-5`,
-`claude-fable-5`, and `claude-fable-5-1` support 1M context by default; no `[1m]` suffix or beta header is
-needed. Set the client's context length to `1000000`. See
-[Anthropic's context documentation](https://platform.claude.com/docs/en/build-with-claude/context-windows).
+### Model names and context budgets
+
+Both model-list endpoints publish bare model names with a `context_length` preset
+of `200000`, plus separate `-1m` aliases with a preset of `1000000` for these models:
+
+- `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`
+- `claude-sonnet-4-6`
+- `claude-fable-5`, `claude-fable-5-1`
+
+For example, choose `claude-fable-5-1-1m` for the 1M preset. Sonnet 4.5 and
+Haiku 4.5 have 200K windows and have no `-1m` aliases.
+
+These are proxy aliases and client budgets, not separate upstream models or
+server-enforced limits. Anthropic provides a native 1M window for the supported
+models under their bare IDs; the proxy resolves each registered alias to that ID
+without an extra beta header. Existing bare-name requests retain their behavior.
+See [Anthropic's context documentation](https://platform.claude.com/docs/en/build-with-claude/context-windows).
+
+Clients must honor discovery metadata or configure their context budget explicitly.
+In Hermes, set per-model `context_length` values in the custom provider's `models`
+configuration, for example:
+
+```yaml
+models:
+  claude-fable-5-1:
+    context_length: 200000
+  claude-fable-5-1-1m:
+    context_length: 1000000
+```
+
+You can change these client budgets to another value within the native model limit.
+`max_tokens` and `max_completion_tokens` control output length, not context size.
+The legacy endpoint retains its existing HTTP body limit; selecting a 1M alias does
+not increase that limit. Use the tool endpoint for larger request bodies.
+
 Model capabilities are validated by upstream; the proxy has no model-specific
 tool-choice restrictions. Signed thinking blocks, when returned, are preserved as
 `reasoning_details` in JSON and SSE and must be replayed unchanged by the client.

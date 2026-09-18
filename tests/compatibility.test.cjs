@@ -81,6 +81,24 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     for (const id of ['claude-opus-5', 'claude-fable-5', 'claude-fable-5-1']) {
       assert.ok(models.data.some(model => model.id === id), `Missing Hermes-compatible model: ${id}`);
     }
+    const supported = ['claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-5', 'claude-sonnet-4-6', 'claude-fable-5', 'claude-fable-5-1'];
+    assert.deepEqual(models.data.filter(m => m.id.endsWith('-1m')).map(m => m.id).sort(), supported.map(id => id + '-1m').sort());
+    for (const model of models.data) assert.equal(model.context_length, model.id.endsWith('-1m') ? 1000000 : 200000);
+    for (const id of supported) {
+      for (const route of ['/v1/chat/completions', '/tools/v1/chat/completions']) {
+        for (const stream of [false, true]) {
+          const response = await post(route, { ...body, model: id + '-1m', stream });
+          assert.equal(response.status, 200);
+          const raw = await response.text();
+          const events = stream ? raw.split('\n').filter(line => line.startsWith('data: {')).map(line => JSON.parse(line.slice(6))) : [JSON.parse(raw)];
+          assert.ok(events.length > 0);
+          assert.ok(events.every(event => event.model === id + '-1m'));
+          const upstream = JSON.parse(fs.readFileSync(capture, 'utf8').trim().split('\n').at(-1));
+          assert.equal(upstream.model, id);
+          assert.equal(upstream.cache_control?.ttl, route.startsWith('/tools') ? '5m' : undefined);
+        }
+      }
+    }
     assert.equal((await (await post('/v1/chat/completions', {})).json()).error.message, 'messages is required');
     assert.equal((await fetch(url + '/v1/chat/completions')).status, 404);
     assert.equal((await fetch(url + '/v1/chat/completions/extra', { method: 'POST' })).status, 404);

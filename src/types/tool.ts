@@ -35,6 +35,7 @@ export type ToolMode = "auto" | "none" | "required";
 export type FinishReason = "tool_calls" | "length" | "content_filter" | "stop";
 
 export interface PreparedToolRequest {
+    model: string;
     request: NativeRequest;
     registry: Map<string, ValidateFunction>;
     mode: ToolMode;

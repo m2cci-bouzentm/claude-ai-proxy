@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { resolveModelId } from "../config/models";
 import { Stream } from "@anthropic-ai/sdk/core/streaming";
 import { MessageStream } from "@anthropic-ai/sdk/lib/MessageStream";
 import type {
@@ -132,7 +133,11 @@ export function prepareToolRequest(
                 JSON.stringify(consumerInstructions),
         });
     }
-    const request: NativeRequest = { model, max_tokens: maxTokens, messages };
+    const request: NativeRequest = {
+        model: resolveModelId(model),
+        max_tokens: maxTokens,
+        messages,
+    };
     // Server-owned automatic caching follows the growing conversation. Keep the
     // file-backed system prompt and its existing explicit cache markers untouched.
     // Ignore client markers so they cannot exhaust slots or conflict with TTLs.
@@ -163,6 +168,7 @@ export function prepareToolRequest(
     request.stop_sequences = input.stop;
     return {
         request,
+        model,
         registry,
         mode,
         forced,
@@ -294,7 +300,7 @@ export async function collectToolResponse(
         id: `chatcmpl-${crypto.randomUUID()}`,
         object: "chat.completion",
         created: Math.floor(Date.now() / 1000),
-        model: prepared.request.model,
+        model: prepared.model,
         choices: [
             {
                 index: 0,
