@@ -130,7 +130,11 @@ export async function collectToolResponse(response: Response, prepared: ReturnTy
   // SDK incrementally parses partial JSON; only complete, strict JSON is
   // executable. Reject an unterminated argument object even if SDK recovered it.
   for (const raw of rawArguments.values()) {
-    try { JSON.parse(raw); } catch { throw new ToolError("Invalid upstream tool arguments", 502); }
+    // Empty deltas carry no JSON; the SDK retains the initial input object.
+    // Ajv below still enforces required arguments, including for no-argument tools.
+    if (raw.length) {
+      try { JSON.parse(raw); } catch { throw new ToolError("Invalid upstream tool arguments", 502); }
+    }
   }
   const finish = message.stop_reason;
   const cached = message.usage.cache_read_input_tokens ?? 0;

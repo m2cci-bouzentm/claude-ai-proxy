@@ -224,3 +224,17 @@ test('schema normalization preserves text, options and local parameter reference
   await collectToolResponse(fixture(), p);
   await assert.rejects(collectToolResponse(fixture({ calls: [{ id: 'a', name: 'echo', input: { text: 1 } }] }), p));
 });
+
+
+test('empty argument deltas retain SDK input while nonempty malformed JSON is rejected', async () => {
+  const noArgs = { type: 'function', function: { name: 'echo', parameters: {
+    type: 'object', properties: {}, additionalProperties: false,
+  } } };
+  const p = prepareToolRequest(request({ tools: [noArgs] }), 'fallback');
+  const result = await collectToolResponse(fixture({ rawArgs: '' }), p);
+  assert.equal(result.choices[0].message.tool_calls[0].function.arguments, '{}');
+  await assert.rejects(collectToolResponse(fixture({ rawArgs: '' }), prepareToolRequest(request(), 'fallback')), /schema validation/);
+  for (const rawArgs of ['{', ' ', '{"text":']) {
+    await assert.rejects(collectToolResponse(fixture({ rawArgs }), p));
+  }
+});
