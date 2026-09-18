@@ -11,7 +11,7 @@ const tool = { type: 'function', function: { name: 'echo', parameters: {
   type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false,
 } } };
 const request = (extra = {}) => ({ model: 'claude-sonnet-4-6', messages: [{ role: 'user', content: 'Echo café' }], tools: [tool], ...extra });
-function fixture({ calls = [{ id: 'toolu_one', name: 'echo', input: { text: 'café' } }], stop, truncated = false, error = false, empty = false, rawArgs, thinking, usage = {} } = {}) {
+function fixture({ calls = [{ id: 'toolu_one', name: 'echo', input: { text: 'café' } }], stop, truncated = false, error = false, empty = false, rawArgs, thinking, stopDetails = null, usage = {} } = {}) {
   const events = [{ type: 'message_start', message: { id: 'msg_test', type: 'message', role: 'assistant', model: 'claude-sonnet-4-6', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 3, output_tokens: 0, cache_read_input_tokens: 4, ...usage } } }];
   const offset = thinking ? 1 : 0;
   if (thinking) events.push({ type: 'content_block_start', index: 0, content_block: thinking }, { type: 'content_block_stop', index: 0 });
@@ -23,7 +23,7 @@ function fixture({ calls = [{ id: 'toolu_one', name: 'echo', input: { text: 'caf
     { type: 'content_block_delta', index: i + offset, delta: { type: 'input_json_delta', partial_json: rawArgs ?? JSON.stringify(c.input) } },
     { type: 'content_block_stop', index: i + offset }));
   if (error) events.push({ type: 'error', error: { message: 'sensitive upstream text' } });
-  events.push({ type: 'message_delta', delta: { stop_reason: stop ?? (calls.length ? 'tool_use' : 'end_turn') }, usage: { output_tokens: 5 } });
+  events.push({ type: 'message_delta', delta: { stop_reason: stop ?? (calls.length ? 'tool_use' : 'end_turn'), stop_details: stopDetails }, usage: { output_tokens: 5 } });
   if (!truncated) events.push({ type: 'message_stop' });
   const bytes = Buffer.from(events.map(e => `event: ${e.type}\r\ndata: ${JSON.stringify(e)}\r\n\r\n`).join(''));
   // Every byte separate: covers split UTF-8, JSON and CRLF frames.
@@ -241,4 +241,57 @@ test('empty argument deltas retain SDK input while nonempty malformed JSON is re
   for (const rawArgs of ['{', ' ', '{"text":']) {
     await assert.rejects(collectToolResponse(fixture({ rawArgs }), p));
   }
+});
+
+
+test('refusals retain diagnostics and usage while discarding partial output, including forced tools', async () => {
+  const details = { type: 'refusal', category: 'cyber', explanation: 'Upstream policy explanation' };
+  for (const choice of ['auto', 'required']) {
+    for (const options of [
+      { calls: [], empty: true },
+      { calls: [] },
+      { rawArgs: '{"text":"unfinished' },
+      { calls: [{ id: 'a', name: 'invented', input: {} }] },
+    ]) {
+      const result = await collectToolResponse(fixture({ ...options, stop: 'refusal', stopDetails: details }), prepareToolRequest(request({ tool_choice: choice }), 'fallback'));
+      assert.equal(result.choices[0].finish_reason, 'content_filter');
+      assert.deepEqual(result.choices[0].message, { role: 'assistant', content: null, refusal: details.explanation, refusal_details: details });
+      assert.equal(result.usage.prompt_tokens, 7);
+    }
+  }
+  for (const details of [null, { type: 'refusal', category: null, explanation: null }]) {
+    const result = await collectToolResponse(fixture({ calls: [], empty: true, stop: 'refusal', stopDetails: details }), prepareToolRequest(request(), 'fallback'));
+    assert.equal(result.choices[0].message.refusal, 'The upstream model declined this request.');
+    assert.deepEqual(result.choices[0].message.refusal_details, details);
+  }
+});
+
+test('JSON and SSE expose the same structured refusal without partial tool calls', async () => {
+  const details = { type: 'refusal', category: 'cyber', explanation: 'Upstream policy explanation' };
+  const app = express(); app.use(express.json());
+  app.use(createToolRouter(async () => fixture({ stop: 'refusal', stopDetails: details }), 'fallback'));
+  const server = app.listen(0);
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/chat/completions`;
+    for (const stream of [false, true]) {
+      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request({ stream, tool_choice: 'required', stream_options: { include_usage: true } })) });
+      assert.equal(response.status, 200);
+      if (!stream) {
+        const data = await response.json();
+        assert.equal(data.choices[0].message.refusal, details.explanation);
+        assert.deepEqual(data.choices[0].message.refusal_details, details);
+        assert.equal(data.choices[0].finish_reason, 'content_filter');
+        assert.equal(data.choices[0].message.tool_calls, undefined);
+      } else {
+        const text = await response.text(); assert.match(text, /data: \[DONE\]/);
+        const events = text.split('\n').filter(l => l.startsWith('data: {')).map(l => JSON.parse(l.slice(6)));
+        const choices = events.flatMap(e => e.choices);
+        assert.equal(choices.find(c => c.delta.refusal).delta.refusal, details.explanation);
+        assert.deepEqual(choices.find(c => c.delta.refusal_details).delta.refusal_details, details);
+        assert.equal(choices.at(-1).finish_reason, 'content_filter');
+        assert.ok(choices.every(c => !c.delta.tool_calls));
+        assert.equal(events.at(-1).usage.prompt_tokens, 7);
+      }
+    }
+  } finally { await new Promise(resolve => server.close(resolve)); }
 });

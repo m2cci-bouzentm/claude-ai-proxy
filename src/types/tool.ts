@@ -7,6 +7,7 @@ import type {
     MessageCreateParamsNonStreaming,
     ThinkingBlock,
     RedactedThinkingBlock,
+    RefusalStopDetails,
 } from "@anthropic-ai/sdk/resources/messages";
 import type { toolRequestSchema } from "../schemas/tool.schema";
 
@@ -48,6 +49,8 @@ export interface PreparedToolRequest {
 export interface ToolMessage {
     role: "assistant";
     content: string | null;
+    refusal?: string;
+    refusal_details?: RefusalStopDetails | null;
     reasoning_details?: Array<ThinkingBlock | RedactedThinkingBlock>;
     tool_calls?: ToolCall[];
 }

@@ -228,31 +228,34 @@ export async function collectToolResponse(
     const message = await stream.finalMessage();
     if (!stopped || openBlocks.size)
         throw new ToolError("Incomplete upstream stream", 502);
-    // SDK incrementally parses partial JSON; only complete, strict JSON is
-    // executable. Reject an unterminated argument object even if SDK recovered it.
-    for (const raw of rawArguments.values()) {
-        // Empty deltas carry no JSON; the SDK retains the initial input object.
-        // Ajv below still enforces required arguments, including for no-argument tools.
-        if (raw.length) {
-            try {
-                JSON.parse(raw);
-            } catch {
-                throw new ToolError("Invalid upstream tool arguments", 502);
+    const finish = message.stop_reason;
+    const refused = finish === "refusal";
+    // A classifier can stop a turn after partial text or tool arguments. Discard
+    // that output; a refusal is not an executable tool turn or schema failure.
+    if (!refused) {
+        for (const raw of rawArguments.values()) {
+            // Empty deltas retain the SDK's initial input (e.g. no-argument tools).
+            if (raw.length) {
+                try {
+                    JSON.parse(raw);
+                } catch {
+                    throw new ToolError("Invalid upstream tool arguments", 502);
+                }
             }
         }
     }
-    const finish = message.stop_reason;
     const cached = message.usage.cache_read_input_tokens ?? 0;
     const written = message.usage.cache_creation_input_tokens ?? 0;
     const prompt = message.usage.input_tokens + cached + written;
     const completion = message.usage.output_tokens;
     const calls: ToolCall[] = [],
         ids = new Set<string>();
-    const reasoningDetails = message.content.filter(
+    const blocks = refused ? [] : message.content;
+    const reasoningDetails = blocks.filter(
         (b) => b.type === "thinking" || b.type === "redacted_thinking",
     );
     let content = "";
-    for (const b of message.content) {
+    for (const b of blocks) {
         if (b.type === "text") content += b.text ?? "";
         if (b.type !== "tool_use") continue;
         const validate = prepared.registry.get(b.name);
@@ -282,7 +285,7 @@ export async function collectToolResponse(
     }
     if (
         (!prepared.parallel && calls.length > 1) ||
-        (prepared.mode === "required" && !calls.length)
+        (!refused && prepared.mode === "required" && !calls.length)
     )
         throw new ToolError("Upstream violated tool_choice", 502);
     if (!calls.length && !content && finish === "end_turn")
@@ -307,6 +310,14 @@ export async function collectToolResponse(
                 message: {
                     role: "assistant",
                     content: content || null,
+                    ...(refused
+                        ? {
+                              refusal:
+                                  message.stop_details?.explanation ??
+                                  "The upstream model declined this request.",
+                              refusal_details: message.stop_details ?? null,
+                          }
+                        : {}),
                     ...(reasoningDetails.length
                         ? { reasoning_details: reasoningDetails }
                         : {}),

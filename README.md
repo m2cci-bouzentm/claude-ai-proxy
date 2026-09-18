@@ -133,6 +133,19 @@ handles SSE decoding, stream errors, incremental JSON and message assembly.
 caller-provided draft-07 tool schemas and generated arguments. Custom code is limited to request/response mapping,
 tool-choice checks and the Express route. No additional LLM service is involved.
 
+### Model refusals
+
+An upstream refusal returns `finish_reason: "content_filter"` on the tool endpoint.
+`message.refusal` contains the upstream explanation, or a generic message when none
+is supplied. `message.refusal_details` preserves the native category and explanation;
+SSE exposes the same fields in `delta`. Partial text, reasoning, and tool calls from
+a refused turn are discarded. Usage and cache accounting are still reported.
+
+These rules apply to every model. The proxy does not silently switch models or
+rewrite prompts to avoid a refusal. Fable 5 can refuse benign Hermes tasks: a
+file-reading probe returned the upstream `cyber` category while smaller native
+tool/cache probes passed. See [Anthropic's refusal documentation](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback).
+
 Run `npm test` for route, compatibility, schema, streaming and cancellation tests.
 
 ## Architecture

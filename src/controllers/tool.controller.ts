@@ -50,6 +50,11 @@ export function createToolController(
                     })}\n\n`,
                 );
             emit({ role: "assistant", content: "" });
+            if (choices[0].message.refusal)
+                emit({
+                    refusal: choices[0].message.refusal,
+                    refusal_details: choices[0].message.refusal_details,
+                });
             if (choices[0].message.reasoning_details)
                 emit({
                     reasoning_details: choices[0].message.reasoning_details,
