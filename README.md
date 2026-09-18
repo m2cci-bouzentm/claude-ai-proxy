@@ -22,13 +22,26 @@ Works with any OpenAI SDK — just change `base_url` to `http://localhost:4181/v
 
 ## Endpoints
 
+| Feature | Default `/v1/chat/completions` | New `/tools/v1/chat/completions` |
+|---------|-------------------------------|--------------------------------|
+| Text chat | Yes | Yes |
+| Native tool calling | No | Yes |
+| Automatic conversation caching | No | Yes |
+| Image input | No | Yes, in user messages and tool results |
+| Streaming | Live SSE | Buffered SSE, validated before delivery |
+| Hermes Agent tool workflows | No | Yes |
+
+The default endpoint remains unchanged for existing text-only clients. Its existing
+system-prompt cache markers still apply; automatic conversation caching is exclusive
+to the new endpoint. Neither endpoint caches completed responses.
+
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/health` | No | Token status and subscription info |
 | GET | `/v1/models` | No | List available models |
-| POST | `/v1/chat/completions` | Yes | OpenAI-compatible completions (streaming supported) |
+| POST | `/v1/chat/completions` | Yes | Text-only completions; no tools or conversation caching |
 | GET | `/tools/v1/models` | No | Same model list for tool-capable clients |
-| POST | `/tools/v1/chat/completions` | Yes | Opt-in native tool calling, JSON or buffered SSE |
+| POST | `/tools/v1/chat/completions` | Yes | Text, native tools, images, and conversation caching |
 
 ### Tool-capable clients (Hermes, OpenAI SDK)
 
