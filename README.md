@@ -4,38 +4,21 @@ OpenAI-compatible API proxy that routes through your Claude Code subscription (M
 
 ## Setup
 
-**1. Get auth credentials** — ensure `~/.claude/.credentials.json` exists locally:
+**Get auth credentials** — ensure `~/.claude/.credentials.json` exists locally:
 
 - **Linux**: already there after `claude` login
 - **macOS**: run `./extract-keychain.sh` to extract from Keychain to file
 
-Then deploy to VPS:
-
-```bash
-./deploy-auth.sh 'ssh -i ~/.ssh/key user@host'
-```
-
-**2. Configure and start** on VPS:
-
-```bash
-cp .env.example .env    # set API_KEY, ACCOUNT_UUID, DEVICE_ID
-docker compose up -d --build
-```
-
-On first start, the proxy seeds from `~/.claude/.credentials.json` and writes its own copy to `/data/auth.json`. From then on, it manages token refresh automatically — the credentials file is deleted after seeding.
-
-**Re-auth** — only needed if the refresh token dies. Extract fresh credentials, copy to VPS, then `rm ./data/auth.json && docker restart claude-ai-proxy` to force re-seed.
-
 ## API
 
 ```bash
-curl http://your-vps:4181/v1/chat/completions \
+curl http://localhost:4181/v1/chat/completions \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model": "claude-sonnet-4-6", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
-Works with any OpenAI SDK — just change `base_url` to `http://your-vps:4181/v1`.
+Works with any OpenAI SDK — just change `base_url` to `http://localhost:4181/v1`.
 
 ## Endpoints
 
@@ -49,12 +32,12 @@ Works with any OpenAI SDK — just change `base_url` to `http://your-vps:4181/v1
 
 ### Tool-capable clients (Hermes, OpenAI SDK)
 
-Use `http://your-vps:4181/tools/v1` as the client's base URL, with the same API key
-and model. Existing clients keep `http://your-vps:4181/v1`; the original request
+Use `http://localhost:4181/tools/v1` as the client's base URL, with the same API key
+and model. Existing clients keep `http://localhost:4181/v1`; the original request
 conversion, response format, streaming and authentication behavior are unchanged.
 
 ```bash
-curl http://your-vps:4181/tools/v1/chat/completions \
+curl http://localhost:4181/tools/v1/chat/completions \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"Echo hello using the tool."}],"tools":[{"type":"function","function":{"name":"echo","parameters":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}}}],"tool_choice":"required"}'
@@ -84,8 +67,8 @@ updated conversation to the same endpoint. The proxy never executes tools.
   are rejected. Adaptive thinking is not enabled on this route because forced
   tool selection is incompatible with it. Existing-route thinking is unchanged.
 
-The standard API IDs `claude-opus-4-6`, `claude-opus-4-8`, `claude-opus-5`, and
-`claude-fable-5-1` support 1M context by default; no `[1m]` suffix or beta header is
+The standard API IDs `claude-opus-4-6`, `claude-opus-4-8`, `claude-opus-5`,
+`claude-fable-5`, and `claude-fable-5-1` support 1M context by default; no `[1m]` suffix or beta header is
 needed. Set the client's context length to `1000000`. See
 [Anthropic's context documentation](https://platform.claude.com/docs/en/build-with-claude/context-windows).
 Model capabilities are validated by upstream; the proxy has no model-specific
@@ -110,7 +93,7 @@ Run `npm test` for route, compatibility, schema, streaming and cancellation test
 
 ## Architecture
 
-The Express layout follows connectAI's AI service conventions:
+The Express application separates routing, validation, and business logic:
 
 ```text
 src/
