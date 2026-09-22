@@ -7,6 +7,7 @@ import { healthRouter } from "./routes/health";
 import { modelsRouter } from "./routes/models";
 import { chatRouter } from "./routes/chat";
 import { toolRouter } from "./routes/tools";
+import { startJobs } from "./jobs";
 
 const app = express();
 app.use(cors());
@@ -25,4 +26,5 @@ app.use("/tools/v1", toolRouter);
 app.listen(config.port, () => {
     console.log(`claude-ai-proxy listening on :${config.port}`);
     console.log(`auth: ${AUTH_FILE}`);
+    startJobs();
 });

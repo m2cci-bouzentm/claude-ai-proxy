@@ -73,12 +73,15 @@ async function refreshAccessToken(
 let currentAuth: OAuthEntry | null = null;
 let refreshPromise: Promise<void> | null = null;
 
-export async function getAuth(): Promise<AuthResult> {
+const REQUEST_BUFFER_MS = 5 * 60 * 1000;
+
+export async function getAuth(
+    bufferMs = REQUEST_BUFFER_MS,
+): Promise<AuthResult> {
     currentAuth ??= storage.read() ?? seedFromClaude();
 
-    const BUFFER_MS = 5 * 60 * 1000;
     const needsRefresh =
-        !currentAuth.access || currentAuth.expires < Date.now() + BUFFER_MS;
+        !currentAuth.access || currentAuth.expires < Date.now() + bufferMs;
     if (!needsRefresh) {
         return {
             accessToken: currentAuth.access,
