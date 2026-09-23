@@ -118,8 +118,8 @@ not increase that limit. Use the tool endpoint for larger request bodies.
 Model capabilities are validated by upstream; the proxy has no model-specific
 tool-choice restrictions. Signed thinking blocks, when returned, are preserved as
 `reasoning_details` in JSON and SSE and must be replayed unchanged by the client.
-The opt-in route uses the 2.1.251 client protocol identity;
-the existing route retains its previous identity and behavior. Model availability
+Both routes present the Claude Code 2.1.280 client identity (User-Agent and
+billing header), which upstream requires for the newest models. Model availability
 still depends on the authenticated account, and the model's token limit applies
 independently of the HTTP byte limit.
 

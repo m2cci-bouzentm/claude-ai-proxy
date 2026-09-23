@@ -64,9 +64,7 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     assert.equal(requests[0].cache_control, undefined);
     assert.equal(requests[1].cache_control, undefined);
     assert.deepEqual(requests[2].cache_control, { type: 'ephemeral', ttl: '5m' });
-    const expectedSystem = requests[0].system.map(b => b.text?.startsWith('x-anthropic-billing-header:')
-      ? { ...b, text: b.text.replace(/cc_version=\d+\.\d+\.\d+/, 'cc_version=2.1.251') } : b);
-    assert.deepEqual(requests[2].system, expectedSystem);
+    assert.deepEqual(requests[2].system, requests[0].system);
     assert.doesNotMatch(JSON.stringify(requests[2].system), /client instructions|DEVELOPER_SENTINEL|UNTRUSTED_TOP_LEVEL_SENTINEL/);
     assert.equal(requests[2].messages[0].role, 'user');
     const callerContext = requests[2].messages[0].content[0].text;
@@ -74,8 +72,8 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     assert.match(callerContext, /DEVELOPER_SENTINEL/);
     assert.equal(requests[2].messages[0].content[1].text, 'hi');
     const oldBilling = requests[0].system.find(b => b.text?.startsWith('x-anthropic-billing-header:')).text;
-    assert.match(oldBilling, /cc_version=2\.1\.160/);
-    assert.match(requests[2].system.find(b => b.text?.startsWith('x-anthropic-billing-header:')).text, /cc_version=2\.1\.251/);
+    assert.match(oldBilling, /cc_version=2\.1\.280/);
+    assert.match(requests[2].system.find(b => b.text?.startsWith('x-anthropic-billing-header:')).text, /cc_version=2\.1\.280/);
     const models = await (await fetch(url + '/v1/models')).json();
     assert.deepEqual(models, await (await fetch(url + '/tools/v1/models')).json());
     for (const id of ['claude-opus-5', 'claude-opus-5-5', 'claude-sonnet-5', 'claude-fable-5', 'claude-fable-5-1']) {
