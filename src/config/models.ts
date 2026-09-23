@@ -7,6 +7,8 @@ const contextWindows = new Map<string, number>([
     ["claude-sonnet-4-5-20250929", 200000],
     ["claude-haiku-4-5-20251001", 200000],
     ["claude-opus-5", 1000000],
+    ["claude-opus-5-5", 1000000],
+    ["claude-sonnet-5", 1000000],
     ["claude-fable-5", 1000000],
     ["claude-fable-5-1", 1000000],
 ]);

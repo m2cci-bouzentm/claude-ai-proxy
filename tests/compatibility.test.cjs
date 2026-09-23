@@ -78,10 +78,10 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     assert.match(requests[2].system.find(b => b.text?.startsWith('x-anthropic-billing-header:')).text, /cc_version=2\.1\.251/);
     const models = await (await fetch(url + '/v1/models')).json();
     assert.deepEqual(models, await (await fetch(url + '/tools/v1/models')).json());
-    for (const id of ['claude-opus-5', 'claude-fable-5', 'claude-fable-5-1']) {
+    for (const id of ['claude-opus-5', 'claude-opus-5-5', 'claude-sonnet-5', 'claude-fable-5', 'claude-fable-5-1']) {
       assert.ok(models.data.some(model => model.id === id), `Missing Hermes-compatible model: ${id}`);
     }
-    const supported = ['claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-5', 'claude-sonnet-4-6', 'claude-fable-5', 'claude-fable-5-1'];
+    const supported = ['claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-5', 'claude-opus-5-5', 'claude-sonnet-4-6', 'claude-sonnet-5', 'claude-fable-5', 'claude-fable-5-1'];
     assert.deepEqual(models.data.filter(m => m.id.endsWith('-1m')).map(m => m.id).sort(), supported.map(id => id + '-1m').sort());
     for (const model of models.data) assert.equal(model.context_length, model.id.endsWith('-1m') ? 1000000 : 200000);
     for (const id of supported) {

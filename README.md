@@ -85,8 +85,8 @@ updated conversation to the same endpoint. The proxy never executes tools.
 Both model-list endpoints publish bare model names with a `context_length` preset
 of `200000`, plus separate `-1m` aliases with a preset of `1000000` for these models:
 
-- `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`
-- `claude-sonnet-4-6`
+- `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`
+- `claude-sonnet-4-6`, `claude-sonnet-5`
 - `claude-fable-5`, `claude-fable-5-1`
 
 For example, choose `claude-fable-5-1-1m` for the 1M preset. Sonnet 4.5 and
