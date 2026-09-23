@@ -29,9 +29,28 @@ const BETAS = [
     "cache-diagnosis-2026-04-07",
 ];
 
-const SYSTEM_PROMPT = JSON.parse(
-    fs.readFileSync(config.systemPromptPath, "utf-8"),
-);
+// Upstream gates newer models on the Claude Code version it sees in the
+// User-Agent and billing header. Keep it at the current installed CLI.
+const CLAUDE_CODE_VERSION = "2.1.280";
+
+const SYSTEM_PROMPT: SystemPromptBlock[] = (() => {
+    const raw = JSON.parse(fs.readFileSync(config.systemPromptPath, "utf-8"));
+    const blocks: SystemPromptBlock[] = Array.isArray(raw)
+        ? raw
+        : [{ type: "text", text: raw }];
+    return blocks.map((block) =>
+        block.type === "text" &&
+        block.text?.startsWith("x-anthropic-billing-header:")
+            ? {
+                  ...block,
+                  text: block.text.replace(
+                      /cc_version=\d+\.\d+\.\d+/,
+                      `cc_version=${CLAUDE_CODE_VERSION}`,
+                  ),
+              }
+            : block,
+    );
+})();
 
 function buildHeaders(auth: AuthResult): Record<string, string> {
     return {
@@ -48,7 +67,7 @@ function buildHeaders(auth: AuthResult): Record<string, string> {
         "X-Stainless-Runtime": "node",
         "X-Stainless-Runtime-Version": process.versions.node,
         "X-Stainless-Retry-Count": "0",
-        "User-Agent": "claude-cli/2.1.160 (external, sdk-cli)",
+        "User-Agent": `claude-cli/${CLAUDE_CODE_VERSION} (external, sdk-cli)`,
     };
 }
 
@@ -156,36 +175,14 @@ export async function createToolResponse(
     signal: AbortSignal,
 ): Promise<Response> {
     const auth = await getAuth();
-    // Keep the opt-in transport identity consistent with its trusted billing
-    // preamble; legacy headers and prompt retain their existing version.
-    const toolClientVersion = "2.1.251";
-    const system = (
-        Array.isArray(SYSTEM_PROMPT)
-            ? SYSTEM_PROMPT
-            : [{ type: "text", text: SYSTEM_PROMPT }]
-    ).map((block: SystemPromptBlock) =>
-        block.type === "text" &&
-        block.text?.startsWith("x-anthropic-billing-header:")
-            ? {
-                  ...block,
-                  text: block.text.replace(
-                      /cc_version=\d+\.\d+\.\d+/,
-                      `cc_version=${toolClientVersion}`,
-                  ),
-              }
-            : block,
-    );
     // Only the trusted, bundled prompt belongs here. Even if an internal caller
     // supplies request.system, the fixed system below overrides it.
     return fetch(API_URL, {
         method: "POST",
-        headers: {
-            ...buildHeaders(auth),
-            "User-Agent": `claude-cli/${toolClientVersion} (external, sdk-cli)`,
-        },
+        headers: buildHeaders(auth),
         body: JSON.stringify({
             ...request,
-            system,
+            system: SYSTEM_PROMPT,
             stream: true,
             metadata: buildMetadata(),
         }),
