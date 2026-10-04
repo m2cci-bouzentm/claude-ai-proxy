@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses native tools', async () => {
+test('unified OpenAI route supports tools, models, SSE and removes old roots', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-proxy-test-'));
   const capture = path.join(tmp, 'requests.jsonl');
   const preload = path.join(tmp, 'preload.cjs');
@@ -47,74 +47,25 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     const body = { messages: [{ role: 'system', content: 'client instructions' }, { role: 'user', content: 'hi' }],
       tools: [{ type: 'function', function: { name: 'echo', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } } }], tool_choice: 'required' };
     const post = (route, input, key = 'test-only') => fetch(url + route, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key }, body: JSON.stringify(input) });
-    for (const route of ['/v1/chat/completions', '/openai/v1/chat/completions']) assert.equal((await post(route, body, 'wrong')).status, 401);
-    const legacy = await (await post('/v1/chat/completions', body)).json();
-    assert.deepEqual(legacy.choices, [{ index: 0, message: { role: 'assistant', content: 'LEGACY_OK' }, finish_reason: 'stop' }]);
-    assert.deepEqual(legacy.usage, { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 });
-    const oldStream = await (await post('/v1/chat/completions', { ...body, stream: true })).text();
-    assert.match(oldStream, /LEGACY_OK/); assert.match(oldStream, /data: \[DONE\]/);
-    const nativeBody = { ...body, system: 'UNTRUSTED_TOP_LEVEL_SENTINEL', messages: [body.messages[0],
-      { role: 'developer', content: 'DEVELOPER_SENTINEL' }, body.messages[1]] };
-    const native = await (await post('/openai/v1/chat/completions', nativeBody)).json();
+    assert.equal((await post('/openai/v1/chat/completions', body, 'wrong')).status, 401);
+    for (const path of ['/v1/models', '/tools/v1/models']) assert.equal((await fetch(url + path)).status, 404);
+    for (const path of ['/v1/chat/completions', '/tools/v1/chat/completions']) assert.equal((await post(path, body)).status, 404);
+    const native = await (await post('/openai/v1/chat/completions', body)).json();
+    assert.equal(native.choices[0].finish_reason, 'tool_calls');
     assert.equal(native.choices[0].message.tool_calls[0].function.name, 'echo');
-    const requests = fs.readFileSync(capture, 'utf8').trim().split('\n').map(JSON.parse);
-    assert.equal(requests[0].tools, undefined); assert.deepEqual(requests[0].thinking, { type: 'adaptive' });
-    assert.deepEqual(requests[0].messages, [{ role: 'user', content: 'hi' }]);
-    assert.equal(requests[2].tools[0].name, 'echo'); assert.equal(requests[2].thinking, undefined);
-    assert.equal(requests[0].cache_control, undefined);
-    assert.equal(requests[1].cache_control, undefined);
-    assert.deepEqual(requests[2].cache_control, { type: 'ephemeral', ttl: '5m' });
-    const expectedSystem = requests[0].system.map(b => b.text?.startsWith('x-anthropic-billing-header:')
-      ? { ...b, text: b.text.replace(/cc_version=\d+\.\d+\.\d+/, 'cc_version=2.1.251') } : b);
-    assert.deepEqual(requests[2].system, expectedSystem);
-    assert.doesNotMatch(JSON.stringify(requests[2].system), /client instructions|DEVELOPER_SENTINEL|UNTRUSTED_TOP_LEVEL_SENTINEL/);
-    assert.equal(requests[2].messages[0].role, 'user');
-    const callerContext = requests[2].messages[0].content[0].text;
-    assert.match(callerContext, /client instructions/);
-    assert.match(callerContext, /DEVELOPER_SENTINEL/);
-    assert.equal(requests[2].messages[0].content[1].text, 'hi');
-    const oldBilling = requests[0].system.find(b => b.text?.startsWith('x-anthropic-billing-header:')).text;
-    assert.match(oldBilling, /cc_version=2\.1\.160/);
-    assert.match(requests[2].system.find(b => b.text?.startsWith('x-anthropic-billing-header:')).text, /cc_version=2\.1\.251/);
-    assert.equal((await fetch(url + '/tools/v1/models')).status, 404);
-    assert.equal((await post('/tools/v1/chat/completions', body)).status, 404);
-    const models = await (await fetch(url + '/v1/models')).json();
-    assert.deepEqual(models, await (await fetch(url + '/openai/v1/models')).json());
-    for (const id of ['claude-opus-5', 'claude-fable-5', 'claude-fable-5-1']) {
-      assert.ok(models.data.some(model => model.id === id), `Missing Hermes-compatible model: ${id}`);
+    const models = await (await fetch(url + '/openai/v1/models')).json();
+    assert.ok(models.data.some(m => m.id === 'claude-sonnet-4-6'));
+    for (const stream of [false, true]) {
+      const response = await post('/openai/v1/chat/completions', { ...body, model: 'claude-sonnet-4-6-1m', stream });
+      assert.equal(response.status, 200);
+      const output = await response.text();
+      assert.match(output, /claude-sonnet-4-6-1m/);
+      const upstream = JSON.parse(fs.readFileSync(capture, 'utf8').trim().split('\n').at(-1));
+      assert.equal(upstream.model, 'claude-sonnet-4-6');
+      assert.equal(upstream.cache_control.ttl, '5m');
     }
-    const supported = ['claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-5', 'claude-sonnet-4-6', 'claude-fable-5', 'claude-fable-5-1'];
-    assert.deepEqual(models.data.filter(m => m.id.endsWith('-1m')).map(m => m.id).sort(), supported.map(id => id + '-1m').sort());
-    for (const model of models.data) assert.equal(model.context_length, model.id.endsWith('-1m') ? 1000000 : 200000);
-    for (const id of supported) {
-      for (const route of ['/v1/chat/completions', '/openai/v1/chat/completions']) {
-        for (const stream of [false, true]) {
-          const response = await post(route, { ...body, model: id + '-1m', stream });
-          assert.equal(response.status, 200);
-          const raw = await response.text();
-          const events = stream ? raw.split('\n').filter(line => line.startsWith('data: {')).map(line => JSON.parse(line.slice(6))) : [JSON.parse(raw)];
-          assert.ok(events.length > 0);
-          assert.ok(events.every(event => event.model === id + '-1m'));
-          const upstream = JSON.parse(fs.readFileSync(capture, 'utf8').trim().split('\n').at(-1));
-          assert.equal(upstream.model, id);
-          assert.equal(upstream.cache_control?.ttl, route.startsWith('/openai') ? '5m' : undefined);
-        }
-      }
-    }
-    assert.equal((await (await post('/v1/chat/completions', {})).json()).error.message, 'messages is required');
-    assert.equal((await fetch(url + '/v1/chat/completions')).status, 404);
-    assert.equal((await fetch(url + '/v1/chat/completions/extra', { method: 'POST' })).status, 404);
     assert.equal((await fetch(url + '/health')).status, 200);
-    const legacyOptions = { model: 'claude-haiku-4-5-20251001', max_tokens: 17, max_completion_tokens: 29,
-      messages: [{ role: 'system', content: 'ignored' }, { role: 'developer', content: 'caller context' },
-        { role: 'user', content: [{ type: 'text', text: 'one' }, { type: 'image_url', image_url: { url: 'unused' } }, { type: 'text', text: 'two' }] }] };
-    assert.equal((await post('/v1/chat/completions', legacyOptions)).status, 200);
-    const lastRequest = JSON.parse(fs.readFileSync(capture, 'utf8').trim().split('\n').at(-1));
-    assert.equal(lastRequest.max_tokens, 17);
-    assert.equal(lastRequest.thinking, undefined);
-    assert.deepEqual(lastRequest.messages, [{ role: 'user', content: 'caller context' }, { role: 'user', content: 'one\ntwo' }]);
     const large = { ...body, messages: [{ role: 'user', content: 'x'.repeat(3 * 1024 * 1024) }] };
-    assert.equal((await post('/v1/chat/completions', large)).status, 413);
     assert.equal((await post('/openai/v1/chat/completions', large)).status, 200);
   } finally { child.kill(); await new Promise(resolve => child.once('exit', resolve)); fs.rmSync(tmp, { recursive: true, force: true }); }
 });

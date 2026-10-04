@@ -11,8 +11,12 @@ test('native gateway authenticates, preserves request, replaces credentials, str
   let release, disconnected;
   const disconnect = new Promise(r => { disconnected = r; });
   const upstream = http.createServer(async (req, res) => {
+    if (req.method === 'HEAD') { res.writeHead(200); return res.end(); }
+    if (req.method === 'GET') { res.setHeader('content-type', 'application/json'); return res.end(JSON.stringify(req.url.includes('usage') ? { five_hour: { utilization: 25 } } : { data: [{ id: 'claude-sonnet-4-6', type: 'model' }], has_more: false, first_id: 'claude-sonnet-4-6', last_id: 'claude-sonnet-4-6' })); }
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw); captures.push({ headers: req.headers, body });
+    if (req.url.includes('count_tokens')) { res.setHeader('content-type', 'application/json'); return res.end(JSON.stringify({ input_tokens: 42 })); }
+    if (req.url.includes('cache_touch')) { res.writeHead(204); return res.end(); }
     if (body.model === 'slow') return;
     if (body.model === 'redirect') { res.writeHead(307, { location: '/redirect-target' }); return res.end(); }
     if (body.model === 'broken') {
@@ -33,21 +37,34 @@ test('native gateway authenticates, preserves request, replaces credentials, str
       return res.end('event: message_stop\ndata: {"type":"message_stop"}\n\n');
     }
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ type: 'message', content: [{ type: 'text', text: 'ok' }] }));
+    res.end(JSON.stringify({ type: 'message', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 8, output_tokens: 2, cache_creation_input_tokens: 1024, cache_read_input_tokens: 2048 } }));
   });
   await new Promise(r => upstream.listen(0, '127.0.0.1', r));
   process.env.ANTHROPIC_UPSTREAM_URL = `http://127.0.0.1:${upstream.address().port}/v1/messages`;
   const { createAnthropicRouter } = require('../dist/routes/anthropic');
   const { authenticateAnthropic: authenticate } = require('../dist/middleware/auth');
-  const app = express(); app.use(express.json()); app.use('/anthropic/v1', authenticate, createAnthropicRouter());
+  const app = express(); app.use(express.json()); app.use('/anthropic', authenticate, createAnthropicRouter());
   const server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
   const url = `http://127.0.0.1:${server.address().port}/anthropic/v1/messages`;
-  const body = { model: 'claude-sonnet-4-6', max_tokens: 100, messages: [{ role: 'user', content: 'hello' }], system: [{ type: 'text', text: 'client system', cache_control: { type: 'ephemeral' } }], thinking: { type: 'adaptive' }, tools: [{ name: 'echo', input_schema: { type: 'object' } }], metadata: { user_id: 'client-session' }, output_config: { effort: 'high' } };
+  const body = { cache_control: { type: 'ephemeral', ttl: '1h' }, model: 'claude-sonnet-4-6', max_tokens: 100, messages: [{ role: 'user', content: 'hello' }], system: [{ type: 'text', text: 'client system', cache_control: { type: 'ephemeral' } }], thinking: { type: 'adaptive' }, tools: [{ name: 'echo', input_schema: { type: 'object' } }], metadata: { user_id: 'client-session' }, output_config: { effort: 'high' } };
   const post = (value, headers = {}) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'inbound-test-key', ...headers }, body: JSON.stringify(value) });
   try {
     assert.equal((await post(body, { 'x-api-key': 'wrong' })).status, 401); assert.equal(captures.length, 0);
+    const nativeHeaders = { 'x-api-key': 'inbound-test-key' };
+    const hello = await fetch(url.replace('/v1/messages', '/api/hello'), { method: 'HEAD', headers: nativeHeaders });
+    assert.equal(hello.status, 200);
+    const models = await fetch(url.replace('/messages', '/models'), { headers: nativeHeaders });
+    assert.equal(models.status, 200); assert.equal((await models.json()).data[0].type, 'model');
+    const usage = await fetch(url.replace('/v1/messages', '/api/oauth/usage?skip_spend=1'), { headers: nativeHeaders });
+    assert.equal(usage.status, 200); assert.equal((await usage.json()).five_hour.utilization, 25);
+    const count = await fetch(url + '/count_tokens', { method: 'POST', headers: { ...nativeHeaders, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    assert.equal(count.status, 200); assert.equal((await count.json()).input_tokens, 42);
+    const touch = await fetch(url + '/cache_touch', { method: 'POST', headers: { ...nativeHeaders, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    assert.equal(touch.status, 204);
+    captures.length = 0;
     const response = await post(body, { 'anthropic-beta': 'custom-beta,oauth-2025-04-20', 'anthropic-version': '2023-06-01', 'x-stainless-retry-count': '2' });
-    assert.equal(response.status, 200); assert.equal((await response.json()).content[0].text, 'ok');
+    assert.equal(response.status, 200); const result = await response.json(); assert.equal(result.content[0].text, 'ok');
+    assert.deepEqual(result.usage, { input_tokens: 8, output_tokens: 2, cache_creation_input_tokens: 1024, cache_read_input_tokens: 2048 });
     assert.deepEqual(captures[0].body, body);
     assert.equal(captures[0].headers.authorization, 'Bearer server-oauth-test-token');
     assert.equal(captures[0].headers['x-api-key'], undefined);

@@ -1,6 +1,6 @@
 # claude-ai-proxy
 
-OpenAI-compatible API proxy that routes through your Claude Code subscription (Max/Pro) instead of API credits. Compatible with **Hermes Agent** through the opt-in `/openai/v1` endpoint for native tools, images, and prompt caching. Existing consumers continue using `/v1` unchanged.
+OpenAI-compatible API proxy that routes through your Claude Code subscription (Max/Pro) instead of API credits. Unified `/openai/v1` supports text, native tools, images, and prompt caching. `/anthropic` exposes native Claude Code endpoints with centralized OAuth. Old `/v1` and `/tools/v1` roots are removed.
 
 ## Setup
 
@@ -12,36 +12,32 @@ OpenAI-compatible API proxy that routes through your Claude Code subscription (M
 ## API
 
 ```bash
-curl http://localhost:4181/v1/chat/completions \
+curl http://localhost:4181/openai/v1/chat/completions \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model": "claude-sonnet-4-6", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
-Works with any OpenAI SDK — just change `base_url` to `http://localhost:4181/v1`.
+Works with any OpenAI SDK — just change `base_url` to `http://localhost:4181/openai/v1`.
 
 ## Endpoints
 
-| Feature | Default `/v1/chat/completions` | New `/openai/v1/chat/completions` |
-|---------|-------------------------------|--------------------------------|
-| Text chat | Yes | Yes |
-| Native tool calling | No | Yes |
-| Automatic conversation caching | No | Yes |
-| Image input | No | Yes, in user messages and tool results |
-| Streaming | Live SSE | Buffered SSE, validated before delivery |
-| Hermes Agent tool workflows | No | Yes |
-
-The default endpoint remains unchanged for existing text-only clients. Its existing
-system-prompt cache markers still apply; automatic conversation caching is exclusive
-to the new endpoint. Neither endpoint caches completed responses.
-
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/health` | No | Token status and subscription info |
-| GET | `/v1/models` | No | List available models |
-| POST | `/v1/chat/completions` | Yes | Text-only completions; no tools or conversation caching |
-| GET | `/openai/v1/models` | No | Same model list for tool-capable clients |
-| POST | `/openai/v1/chat/completions` | Yes | Text, native tools, images, and conversation caching |
+| GET | `/health` | No | Proxy health |
+| GET | `/openai/v1/models` | No | OpenAI model discovery |
+| POST | `/openai/v1/chat/completions` | Yes | Unified text/tools/images/caching |
+| POST | `/anthropic/v1/messages` | Yes | Native Messages and incremental SSE |
+| POST | `/anthropic/v1/messages/count_tokens` | Yes | Native token counting |
+| POST | `/anthropic/v1/messages/cache_touch` | Yes | Claude Code cache maintenance |
+| GET | `/anthropic/v1/models` | Yes | Upstream model discovery/pagination |
+| GET | `/anthropic/v1/models/:model` | Yes | Upstream model details |
+| GET | `/anthropic/api/oauth/usage` | Yes | Central account usage/limits |
+| GET | `/anthropic/api/oauth/profile` | Yes | Central account profile |
+| HEAD | `/anthropic/api/hello` | Yes | Claude Code gateway probe |
+
+Native cache annotations, TTLs, token usage, cache-read/write counters, and SSE
+pass through unchanged. No local completion-response cache.
 
 ### Native Claude Code gateway
 
@@ -56,9 +52,9 @@ Claude Code appends `/v1/messages`; do not include `/v1` in this base URL.
 replaces it with centralized server OAuth, and preserves native system prompts,
 tools, thinking, cache markers, metadata, and other request fields. Native SSE
 passes through incrementally; JSON and upstream error status/bodies remain native.
-The gateway merges OAuth/Claude Code beta headers with client betas. Only Messages
-is implemented: token counting, files, batches, and other Anthropic APIs are not
-proxied. Upstream OAuth acceptance and account subscription limits still apply.
+The gateway merges OAuth/Claude Code beta headers with client betas. Messages, token counting, cache touch, models, usage/profile, and gateway probe
+are implemented. Files, batches, cloud sessions, MCP connectors, and account
+management APIs are not proxied; this is not a full claude.ai backend replacement. Upstream OAuth acceptance and account subscription limits still apply.
 Automated tests use a local fake upstream; real multi-device Claude Code/OAuth
 inference has not been smoke-tested. Client-supplied metadata is preserved.
 Redirects are rejected. Buffered upstream responses are limited to 32 MiB.
@@ -70,8 +66,7 @@ proxy. `/tools/v1` has been removed; migrate clients to `/openai/v1`.
 ### Tool-capable clients (Hermes, OpenAI SDK)
 
 Use `http://localhost:4181/openai/v1` as the client's base URL, with the same API key
-and model. Existing clients keep `http://localhost:4181/v1`; the original request
-conversion, response format, streaming and authentication behavior are unchanged.
+and model. Migrate all OpenAI clients to this unified endpoint; separate text-only route is removed.
 
 ```bash
 curl http://localhost:4181/openai/v1/chat/completions \
@@ -102,7 +97,7 @@ updated conversation to the same endpoint. The proxy never executes tools.
   120 seconds. Client disconnects abort the new route's upstream request.
 - Text and image content in user/tool messages; `n=1`. `response_format` and legacy `functions`/`function_call`
   are rejected. Adaptive thinking is not enabled on this route because forced
-  tool selection is incompatible with it. Existing-route thinking is unchanged.
+  tool selection is incompatible with it. Native Anthropic thinking passes through unchanged.
 
 ### Model names and context budgets
 
@@ -136,8 +131,7 @@ models:
 
 You can change these client budgets to another value within the native model limit.
 `max_tokens` and `max_completion_tokens` control output length, not context size.
-The legacy endpoint retains its existing HTTP body limit; selecting a 1M alias does
-not increase that limit. Use the tool endpoint for larger request bodies.
+Unified OpenAI inference endpoint accepts bodies up to 32 MiB.
 
 Model capabilities are validated by upstream; the proxy has no model-specific
 tool-choice restrictions. Signed thinking blocks, when returned, are preserved as
@@ -224,7 +218,7 @@ tool loops and can follow the earlier one-hour markers. Custom prompt files must
 leave a slot available and respect Anthropic's longest-TTL-first ordering.
 Client-supplied cache markers are not forwarded; the server owns this policy.
 Set `TOOL_PROMPT_CACHE_TTL=off` to disable conversation caching while retaining the
-file's existing system caches. The legacy `/v1` endpoint is unaffected.
+file's existing system caches. Old `/v1` endpoint has been removed.
 
 JSON and SSE usage (when `stream_options.include_usage` is true) expose
 `prompt_tokens_details.cached_tokens` and `prompt_tokens_details.cache_write_tokens`.

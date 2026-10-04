@@ -26,13 +26,16 @@ export async function proxyAnthropicMessages(
         timeout.unref();
     };
     try {
-        const incomingBody = req.body;
+        const incomingBody = req.body ?? {};
+        const isMessages = req.path === "/v1/messages";
+        const isCountTokens = req.path === "/v1/messages/count_tokens";
 
         if (
+            (isMessages || isCountTokens) && (
             !incomingBody ||
             typeof incomingBody !== "object" ||
             !incomingBody.messages ||
-            !Array.isArray(incomingBody.messages)
+            !Array.isArray(incomingBody.messages))
         ) {
             res.status(400).json({
                 type: "error",
@@ -55,7 +58,7 @@ export async function proxyAnthropicMessages(
             ...(resolvedModel ? { model: resolvedModel } : {}),
         };
 
-        if (!forwardBody.metadata || typeof forwardBody.metadata !== "object") {
+        if (isMessages && (!forwardBody.metadata || typeof forwardBody.metadata !== "object")) {
             forwardBody.metadata = {
                 user_id: JSON.stringify({
                     device_id: config.deviceId,
@@ -100,11 +103,13 @@ export async function proxyAnthropicMessages(
         }
         outboundHeaders["anthropic-beta"] = Array.from(betaSet).join(",");
 
-        const upstreamResp = await fetch(UPSTREAM_ANTHROPIC_URL, {
-            method: "POST",
+        const upstreamUrl = new URL(req.path + req.url.slice(req.path.length), new URL(UPSTREAM_ANTHROPIC_URL).origin);
+        if (isMessages && !upstreamUrl.searchParams.has("beta")) upstreamUrl.searchParams.set("beta", "true");
+        const upstreamResp = await fetch(upstreamUrl, {
+            method: req.method,
             redirect: "error",
             headers: outboundHeaders,
-            body: JSON.stringify(forwardBody),
+            body: ["GET", "HEAD"].includes(req.method) ? undefined : JSON.stringify(forwardBody),
             signal: cancellation.signal,
         });
 
