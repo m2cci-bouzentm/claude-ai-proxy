@@ -25,7 +25,7 @@ export function prepareToolRequest(
     defaultModel: string,
 ): PreparedToolRequest {
     const model = input.model ?? defaultModel;
-    const maxTokens = input.max_completion_tokens ?? input.max_tokens ?? 8192;
+    const maxTokens = input.max_tokens ?? input.max_completion_tokens ?? 8192;
     const registry = new Map<string, ValidateFunction>();
     const tools = input.tools.map(({ function: fn }) => {
         if (registry.has(fn.name))
