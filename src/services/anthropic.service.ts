@@ -87,7 +87,7 @@ export async function proxyAnthropicMessages(
         // Forward stainless headers
         for (const [key, value] of Object.entries(req.headers)) {
             const lower = key.toLowerCase();
-            if (lower.startsWith("x-stainless-") && typeof value === "string") {
+            if ((lower.startsWith("x-stainless-") || lower === "x-claude-code-session-id") && typeof value === "string") {
                 outboundHeaders[key] = value;
             }
         }

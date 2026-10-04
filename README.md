@@ -90,9 +90,10 @@ updated conversation to the same endpoint. The proxy never executes tools.
   Anthropic's `system` field, which contains only the proxy's bundled prompt.
   User messages and native tool-result IDs are preserved on this route.
 - `stream: true` returns OpenAI SSE, with stable IDs, indexed calls, finish reason,
-  `[DONE]`, and optional `stream_options.include_usage`. The whole upstream turn
-  is buffered before emitting SSE so all calls can be validated first. This adds
-  time to the first emitted chunk; it is not live token streaming.
+  `[DONE]`, and optional `stream_options.include_usage`. Text requests without
+  tool definitions emit text deltas live through this same unified handler.
+  Tool turns remain buffered until executable calls validate. Text-only,
+  non-Haiku requests retain adaptive thinking; forced tool calls never enable it.
 - Requests are limited to 32 MiB (to accommodate 1M-token contexts), upstream responses to 8 MiB, and upstream time to
   120 seconds. Client disconnects abort the new route's upstream request.
 - Text and image content in user/tool messages; `n=1`. `response_format` and legacy `functions`/`function_call`

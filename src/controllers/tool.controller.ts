@@ -1,4 +1,5 @@
 import * as toolService from "../services/tool.service";
+import crypto from "crypto";
 import { createRequestCancellation } from "../utils/abort";
 import { sendToolError } from "../utils/tool-error";
 import type {
@@ -14,6 +15,20 @@ export function createToolController(
 ): ToolRequestHandler {
     return async (req, res) => {
         const cancellation = createRequestCancellation(res);
+        const liveText = req.body.stream === true && req.body.tools.length === 0;
+        const liveBase = { id: `chatcmpl-${crypto.randomUUID()}`, created: Math.floor(Date.now()/1000), model: req.body.model ?? defaultModel, object: "chat.completion.chunk" };
+        let liveStarted = false;
+        const onText = (content: string) => {
+            if (res.destroyed) { cancellation.abort(); return; }
+            if (!liveStarted) {
+                res.setHeader("Content-Type", "text/event-stream");
+                res.setHeader("Cache-Control", "no-cache");
+                res.setHeader("X-Accel-Buffering", "no");
+                res.write(`data: ${JSON.stringify({...liveBase, choices:[{index:0,delta:{role:"assistant",content:""},finish_reason:null}]})}\n\n`);
+                liveStarted = true;
+            }
+            res.write(`data: ${JSON.stringify({...liveBase, choices:[{index:0,delta:{content},finish_reason:null}]})}\n\n`);
+        };
         try {
             const { result, stream, includeUsage } =
                 await toolService.completeToolChat(
@@ -21,6 +36,7 @@ export function createToolController(
                     defaultModel,
                     transport,
                     cancellation.signal,
+                    liveText ? onText : undefined,
                 );
             if (res.destroyed) return;
             if (!stream) {
@@ -28,13 +44,15 @@ export function createToolController(
                 return;
             }
             // Buffer tool turns until all calls validate; never expose executable partial calls.
-            res.setHeader("Content-Type", "text/event-stream");
-            res.setHeader("Cache-Control", "no-cache");
-            res.setHeader("X-Accel-Buffering", "no");
+            if (!liveStarted) {
+                res.setHeader("Content-Type", "text/event-stream");
+                res.setHeader("Cache-Control", "no-cache");
+                res.setHeader("X-Accel-Buffering", "no");
+            }
             const { id, created, model, choices, usage } = result;
             const base = {
-                id,
-                created,
+                id: liveStarted ? liveBase.id : id,
+                created: liveStarted ? liveBase.created : created,
                 model,
                 object: "chat.completion.chunk",
             };
@@ -49,7 +67,7 @@ export function createToolController(
                         ...(includeUsage ? { usage: null } : {}),
                     })}\n\n`,
                 );
-            emit({ role: "assistant", content: "" });
+            if (!liveStarted) emit({ role: "assistant", content: "" });
             if (choices[0].message.refusal)
                 emit({
                     refusal: choices[0].message.refusal,
@@ -59,7 +77,7 @@ export function createToolController(
                 emit({
                     reasoning_details: choices[0].message.reasoning_details,
                 });
-            if (choices[0].message.content)
+            if (choices[0].message.content && !liveStarted)
                 emit({ content: choices[0].message.content });
             choices[0].message.tool_calls?.forEach((call, index) =>
                 emit({ tool_calls: [{ index, ...call }] }),

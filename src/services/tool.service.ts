@@ -162,7 +162,8 @@ export function prepareToolRequest(
                 : {}),
         };
     }
-    // Do not enable adaptive thinking here: forced tools are incompatible with it.
+    // Preserve text-client reasoning while never combining adaptive thinking with forced tools.
+    if (!tools.length && !model.toLowerCase().includes("haiku")) request.thinking = { type: "adaptive" };
     request.temperature = input.temperature;
     request.top_p = input.top_p;
     request.stop_sequences = input.stop;
@@ -181,6 +182,7 @@ export function prepareToolRequest(
 export async function collectToolResponse(
     response: Response,
     prepared: PreparedToolRequest,
+    onText?: (text: string) => void,
 ): Promise<ToolCompletion> {
     if (!response.ok) {
         await response.body?.cancel();
@@ -212,6 +214,7 @@ export async function collectToolResponse(
     const openBlocks = new Set<number>(),
         rawArguments = new Map<number, string>();
     stream.on("streamEvent", (e) => {
+        if (e.type === "content_block_delta" && e.delta.type === "text_delta") onText?.(e.delta.text);
         if (e.type === "message_stop") stopped = true;
         if (e.type === "content_block_start") openBlocks.add(e.index);
         if (e.type === "content_block_stop") openBlocks.delete(e.index);
@@ -349,11 +352,13 @@ export async function completeToolChat(
     defaultModel: string,
     transport: ToolTransport,
     signal: AbortSignal,
+    onText?: (text: string) => void,
 ) {
     const prepared = prepareToolRequest(input, defaultModel);
     const result = await collectToolResponse(
         await transport(prepared.request, signal),
         prepared,
+        onText,
     );
     return {
         result,

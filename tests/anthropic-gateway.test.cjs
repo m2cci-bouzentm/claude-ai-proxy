@@ -62,7 +62,7 @@ test('native gateway authenticates, preserves request, replaces credentials, str
     const touch = await fetch(url + '/cache_touch', { method: 'POST', headers: { ...nativeHeaders, 'content-type': 'application/json' }, body: JSON.stringify(body) });
     assert.equal(touch.status, 204);
     captures.length = 0;
-    const response = await post(body, { 'anthropic-beta': 'custom-beta,oauth-2025-04-20', 'anthropic-version': '2023-06-01', 'x-stainless-retry-count': '2' });
+    const response = await post(body, { 'anthropic-beta': 'custom-beta,oauth-2025-04-20', 'anthropic-version': '2023-06-01', 'x-stainless-retry-count': '2', 'x-claude-code-session-id': 'client-stable-session' });
     assert.equal(response.status, 200); const result = await response.json(); assert.equal(result.content[0].text, 'ok');
     assert.deepEqual(result.usage, { input_tokens: 8, output_tokens: 2, cache_creation_input_tokens: 1024, cache_read_input_tokens: 2048 });
     assert.deepEqual(captures[0].body, body);
@@ -70,6 +70,7 @@ test('native gateway authenticates, preserves request, replaces credentials, str
     assert.equal(captures[0].headers['x-api-key'], undefined);
     assert.ok(captures[0].headers['anthropic-beta'].includes('custom-beta'));
     assert.equal(captures[0].headers['x-stainless-retry-count'], '2');
+    assert.equal(captures[0].headers['x-claude-code-session-id'], 'client-stable-session');
     const error = await post({ ...body, model: 'error' }); assert.equal(error.status, 429);
     assert.equal(error.headers.get('retry-after'), '3'); assert.equal(error.headers.get('request-id'), 'req_test');
     assert.equal((await error.json()).error.type, 'rate_limit_error');
