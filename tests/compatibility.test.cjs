@@ -47,7 +47,7 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     const body = { messages: [{ role: 'system', content: 'client instructions' }, { role: 'user', content: 'hi' }],
       tools: [{ type: 'function', function: { name: 'echo', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } } }], tool_choice: 'required' };
     const post = (route, input, key = 'test-only') => fetch(url + route, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key }, body: JSON.stringify(input) });
-    for (const route of ['/v1/chat/completions', '/tools/v1/chat/completions']) assert.equal((await post(route, body, 'wrong')).status, 401);
+    for (const route of ['/v1/chat/completions', '/openai/v1/chat/completions']) assert.equal((await post(route, body, 'wrong')).status, 401);
     const legacy = await (await post('/v1/chat/completions', body)).json();
     assert.deepEqual(legacy.choices, [{ index: 0, message: { role: 'assistant', content: 'LEGACY_OK' }, finish_reason: 'stop' }]);
     assert.deepEqual(legacy.usage, { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 });
@@ -55,7 +55,7 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     assert.match(oldStream, /LEGACY_OK/); assert.match(oldStream, /data: \[DONE\]/);
     const nativeBody = { ...body, system: 'UNTRUSTED_TOP_LEVEL_SENTINEL', messages: [body.messages[0],
       { role: 'developer', content: 'DEVELOPER_SENTINEL' }, body.messages[1]] };
-    const native = await (await post('/tools/v1/chat/completions', nativeBody)).json();
+    const native = await (await post('/openai/v1/chat/completions', nativeBody)).json();
     assert.equal(native.choices[0].message.tool_calls[0].function.name, 'echo');
     const requests = fs.readFileSync(capture, 'utf8').trim().split('\n').map(JSON.parse);
     assert.equal(requests[0].tools, undefined); assert.deepEqual(requests[0].thinking, { type: 'adaptive' });
@@ -76,8 +76,10 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     const oldBilling = requests[0].system.find(b => b.text?.startsWith('x-anthropic-billing-header:')).text;
     assert.match(oldBilling, /cc_version=2\.1\.160/);
     assert.match(requests[2].system.find(b => b.text?.startsWith('x-anthropic-billing-header:')).text, /cc_version=2\.1\.251/);
+    assert.equal((await fetch(url + '/tools/v1/models')).status, 404);
+    assert.equal((await post('/tools/v1/chat/completions', body)).status, 404);
     const models = await (await fetch(url + '/v1/models')).json();
-    assert.deepEqual(models, await (await fetch(url + '/tools/v1/models')).json());
+    assert.deepEqual(models, await (await fetch(url + '/openai/v1/models')).json());
     for (const id of ['claude-opus-5', 'claude-fable-5', 'claude-fable-5-1']) {
       assert.ok(models.data.some(model => model.id === id), `Missing Hermes-compatible model: ${id}`);
     }
@@ -85,7 +87,7 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     assert.deepEqual(models.data.filter(m => m.id.endsWith('-1m')).map(m => m.id).sort(), supported.map(id => id + '-1m').sort());
     for (const model of models.data) assert.equal(model.context_length, model.id.endsWith('-1m') ? 1000000 : 200000);
     for (const id of supported) {
-      for (const route of ['/v1/chat/completions', '/tools/v1/chat/completions']) {
+      for (const route of ['/v1/chat/completions', '/openai/v1/chat/completions']) {
         for (const stream of [false, true]) {
           const response = await post(route, { ...body, model: id + '-1m', stream });
           assert.equal(response.status, 200);
@@ -95,7 +97,7 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
           assert.ok(events.every(event => event.model === id + '-1m'));
           const upstream = JSON.parse(fs.readFileSync(capture, 'utf8').trim().split('\n').at(-1));
           assert.equal(upstream.model, id);
-          assert.equal(upstream.cache_control?.ttl, route.startsWith('/tools') ? '5m' : undefined);
+          assert.equal(upstream.cache_control?.ttl, route.startsWith('/openai') ? '5m' : undefined);
         }
       }
     }
@@ -113,6 +115,6 @@ test('real server preserves legacy JSON/SSE/auth/models while new endpoint uses 
     assert.deepEqual(lastRequest.messages, [{ role: 'user', content: 'caller context' }, { role: 'user', content: 'one\ntwo' }]);
     const large = { ...body, messages: [{ role: 'user', content: 'x'.repeat(3 * 1024 * 1024) }] };
     assert.equal((await post('/v1/chat/completions', large)).status, 413);
-    assert.equal((await post('/tools/v1/chat/completions', large)).status, 200);
+    assert.equal((await post('/openai/v1/chat/completions', large)).status, 200);
   } finally { child.kill(); await new Promise(resolve => child.once('exit', resolve)); fs.rmSync(tmp, { recursive: true, force: true }); }
 });

@@ -92,7 +92,7 @@ test('HTTP SSE uses stable IDs, usage, finish and DONE; disconnect aborts upstre
   const thinking = { type: 'thinking', thinking: 'Signed reasoning', signature: 'opaque-signature' };
   let aborted;
   const disconnected = new Promise(resolve => { aborted = resolve; });
-  app.use('/tools/v1', createToolRouter(async (body, signal) => {
+  app.use('/openai/v1', createToolRouter(async (body, signal) => {
     if (body.model === 'disconnect') {
       return new Promise((_resolve, reject) => signal.addEventListener('abort', () => { aborted(); reject(new Error('aborted')); }, { once: true }));
     }
@@ -100,7 +100,7 @@ test('HTTP SSE uses stable IDs, usage, finish and DONE; disconnect aborts upstre
   }, 'fallback'));
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
-  const url = `http://127.0.0.1:${server.address().port}/tools/v1/chat/completions`;
+  const url = `http://127.0.0.1:${server.address().port}/openai/v1/chat/completions`;
   try {
     const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request({ stream: true, stream_options: { include_usage: true } })) });
     assert.equal(response.status, 200);

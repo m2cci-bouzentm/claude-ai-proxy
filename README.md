@@ -1,6 +1,6 @@
 # claude-ai-proxy
 
-OpenAI-compatible API proxy that routes through your Claude Code subscription (Max/Pro) instead of API credits. Compatible with **Hermes Agent** through the opt-in `/tools/v1` endpoint for native tools, images, and prompt caching. Existing consumers continue using `/v1` unchanged.
+OpenAI-compatible API proxy that routes through your Claude Code subscription (Max/Pro) instead of API credits. Compatible with **Hermes Agent** through the opt-in `/openai/v1` endpoint for native tools, images, and prompt caching. Existing consumers continue using `/v1` unchanged.
 
 ## Setup
 
@@ -22,7 +22,7 @@ Works with any OpenAI SDK — just change `base_url` to `http://localhost:4181/v
 
 ## Endpoints
 
-| Feature | Default `/v1/chat/completions` | New `/tools/v1/chat/completions` |
+| Feature | Default `/v1/chat/completions` | New `/openai/v1/chat/completions` |
 |---------|-------------------------------|--------------------------------|
 | Text chat | Yes | Yes |
 | Native tool calling | No | Yes |
@@ -40,17 +40,41 @@ to the new endpoint. Neither endpoint caches completed responses.
 | GET | `/health` | No | Token status and subscription info |
 | GET | `/v1/models` | No | List available models |
 | POST | `/v1/chat/completions` | Yes | Text-only completions; no tools or conversation caching |
-| GET | `/tools/v1/models` | No | Same model list for tool-capable clients |
-| POST | `/tools/v1/chat/completions` | Yes | Text, native tools, images, and conversation caching |
+| GET | `/openai/v1/models` | No | Same model list for tool-capable clients |
+| POST | `/openai/v1/chat/completions` | Yes | Text, native tools, images, and conversation caching |
+
+### Native Claude Code gateway
+
+```bash
+export ANTHROPIC_BASE_URL="http://localhost:4181/anthropic"
+export ANTHROPIC_AUTH_TOKEN="$PROXY_API_KEY"
+claude
+```
+
+Claude Code appends `/v1/messages`; do not include `/v1` in this base URL.
+`POST /anthropic/v1/messages` accepts Bearer or `x-api-key` proxy authentication,
+replaces it with centralized server OAuth, and preserves native system prompts,
+tools, thinking, cache markers, metadata, and other request fields. Native SSE
+passes through incrementally; JSON and upstream error status/bodies remain native.
+The gateway merges OAuth/Claude Code beta headers with client betas. Only Messages
+is implemented: token counting, files, batches, and other Anthropic APIs are not
+proxied. Upstream OAuth acceptance and account subscription limits still apply.
+Automated tests use a local fake upstream; real multi-device Claude Code/OAuth
+inference has not been smoke-tested. Client-supplied metadata is preserved.
+Redirects are rejected. Buffered upstream responses are limited to 32 MiB.
+`ANTHROPIC_TIMEOUT_MS` defaults to 120000: first-response/body deadline and
+stream idle timeout, refreshed on each streamed chunk.
+Use HTTPS or private networking for remote access; never expose an unprotected
+proxy. `/tools/v1` has been removed; migrate clients to `/openai/v1`.
 
 ### Tool-capable clients (Hermes, OpenAI SDK)
 
-Use `http://localhost:4181/tools/v1` as the client's base URL, with the same API key
+Use `http://localhost:4181/openai/v1` as the client's base URL, with the same API key
 and model. Existing clients keep `http://localhost:4181/v1`; the original request
 conversion, response format, streaming and authentication behavior are unchanged.
 
 ```bash
-curl http://localhost:4181/tools/v1/chat/completions \
+curl http://localhost:4181/openai/v1/chat/completions \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"Echo hello using the tool."}],"tools":[{"type":"function","function":{"name":"echo","parameters":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}}}],"tool_choice":"required"}'
@@ -184,7 +208,7 @@ behavior; it does not use the Hermes request schema.
 | `ACCOUNT_UUID` | required | Claude account UUID |
 | `DEVICE_ID` | required | Device ID hex string |
 | `SYSTEM_PROMPT_PATH` | `/data/system_prompt.json` | CLI system prompt file |
-| `TOOL_PROMPT_CACHE_TTL` | `5m` | Automatic conversation caching on `/tools/v1` only: `5m`, `1h`, or `off` |
+| `TOOL_PROMPT_CACHE_TTL` | `5m` | Automatic conversation caching on `/openai/v1` only: `5m`, `1h`, or `off` |
 
 ### Prompt caching on the tool endpoint
 
