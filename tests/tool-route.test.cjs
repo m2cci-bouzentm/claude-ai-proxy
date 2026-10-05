@@ -58,7 +58,7 @@ test('tool round trip preserves schemas, IDs, consumer system instructions, and 
   assert.equal(multi.request.messages[2].content.length, 2);
 });
 
-test('constraints reject malformed, unknown, truncated or forbidden calls', async () => {
+test('constraints reject malformed, truncated or forbidden calls and forward unknown names', async () => {
   for (const extra of [{ tool_choice: 'bad' }, { tool_choice: { type: 'function', function: { name: 'unknown' } } }, { parallel_tool_calls: 'false' }, { n: 2 },
     { tools: [{ ...tool, function: { ...tool.function, parameters: { type: 'object', properties: { x: { $ref: 'https://example.com/schema' } } } } }] }]) {
     assert.throws(() => prepareToolRequest(request(extra), 'fallback'));
@@ -75,9 +75,12 @@ test('constraints reject malformed, unknown, truncated or forbidden calls', asyn
   const preserved = prepareToolRequest(request({ messages: [...request().messages, { role: 'assistant', content: 'done', reasoning_details: [thinking] }, { role: 'user', content: 'continue' }] }), 'fallback');
   assert.deepEqual(preserved.request.messages[1].content[0], thinking);
   for (const options of [{ truncated: true }, { error: true }, { stop: 'max_tokens' }, { calls: [], empty: true }, { rawArgs: '{"text":"unfinished' },
-    { calls: [{ id: 'a', name: 'invented', input: {} }] }, { calls: [{ id: 'a', name: 'echo', input: { text: 5 } }] }]) {
+    { calls: [{ id: 'a', name: 'echo', input: { text: 5 } }] }]) {
     await assert.rejects(collectToolResponse(fixture(options), p));
   }
+  const unknown = await collectToolResponse(fixture({ calls: [{ id: 'a', name: 'invented', input: { x: 1 } }] }), p);
+  assert.deepEqual(unknown.choices[0].message.tool_calls.map(c => [c.function.name, c.function.arguments]), [['invented', '{"x":1}']]);
+  assert.equal(unknown.choices[0].finish_reason, 'tool_calls');
   await assert.rejects(collectToolResponse(fixture(), prepareToolRequest(request({ tool_choice: 'none' }), 'fallback')));
   await assert.rejects(collectToolResponse(fixture({ calls: [] }), prepareToolRequest(request({ tool_choice: 'required' }), 'fallback')));
   const forced = prepareToolRequest(request({ tool_choice: { type: 'function', function: { name: 'echo' } }, parallel_tool_calls: false }), 'fallback');

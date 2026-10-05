@@ -271,18 +271,21 @@ export async function collectToolResponse(
         if (b.type !== "tool_use") continue;
         const validate = prepared.registry.get(b.name);
         if (
-            !validate ||
             prepared.mode === "none" ||
             (prepared.forced && b.name !== prepared.forced) ||
             !b.id ||
             ids.has(b.id)
         )
             throw new ToolError(
-                "Upstream returned a disallowed tool call",
+                `Upstream returned a disallowed tool call: ${b.name}`,
                 502,
             );
         const args = b.input;
-        if (!validate(args))
+        // An unknown name is model error, not transport error: forward it so the client returns
+        // "unknown tool" as a tool result and the model self-corrects. A 502 replays on every retry.
+        if (!validate)
+            console.warn(`[tools] forwarding unknown tool call "${b.name}" to client`);
+        else if (!validate(args))
             throw new ToolError(
                 "Upstream tool arguments failed schema validation",
                 502,
