@@ -228,6 +228,10 @@ Cache hits require a matching prefix; changing earlier tools/instructions or
 compacting history can reduce hits. Responses and tool results are never memoized.
 API cache pricing is not a guarantee of equivalent subscription allowance savings.
 
+## OpenCode verification
+
+OpenCode 1.14.39 sends Draft 2020-12 tool schemas on every request. A live run exposed draft-07-only validation; regression now covers OpenCode-style `$schema`/`$defs`, and validation uses Ajv 2020. A real request containing all ten OpenCode tool schemas now passes local validation and reaches Anthropic. Provider then returns 429 because account weekly quota is exhausted; live text, Bash and cache evidence will be rerun after provider reset.
+
 ## Security note
 
 Claude Code's subscriber-tier API access is gated by the presence of the CLI system prompt in the request body — not by cryptographic signing or token scoping. The system prompt is shipped in plaintext inside the compiled CLI binary, making it trivially extractable. It functions as a shared secret in cleartext.

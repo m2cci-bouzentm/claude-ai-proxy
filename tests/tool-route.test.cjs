@@ -226,6 +226,18 @@ test('schema normalization preserves text, options and local parameter reference
   assert.equal(p.request.temperature, 0);
   assert.equal(p.request.top_p, 1);
   await collectToolResponse(fixture(), p);
+  const opencodeParameters = {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    type: 'object',
+    $defs: { text: { type: 'string' } },
+    properties: { text: { $ref: '#/$defs/text' } },
+    required: ['text'],
+  };
+  const opencode = prepareToolRequest(request({
+    tools: [{ type: 'function', function: { name: 'echo', parameters: opencodeParameters } }],
+  }), 'fallback');
+  assert.deepEqual(opencode.request.tools[0].input_schema, opencodeParameters);
+  await collectToolResponse(fixture(), opencode);
   await assert.rejects(collectToolResponse(fixture({ calls: [{ id: 'a', name: 'echo', input: { text: 1 } }] }), p));
 });
 

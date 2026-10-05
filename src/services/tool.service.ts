@@ -6,7 +6,7 @@ import type {
     ContentBlockParam,
     MessageStreamEvent,
 } from "@anthropic-ai/sdk/resources/messages";
-import Ajv, { type ValidateFunction } from "ajv";
+import Ajv2020, { type ValidateFunction } from "ajv/dist/2020";
 import { config, getToolCacheTtl } from "../config";
 import { ToolError } from "../errors/tool-error";
 import type {
@@ -31,17 +31,18 @@ export function prepareToolRequest(
         if (registry.has(fn.name))
             throw new ToolError("Tool names must be unique");
         try {
-            // Ajv validates caller-defined draft-07 schemas and arguments. No remote
+            // Ajv validates caller-defined Draft 2020-12 schemas (including
+            // OpenCode's $schema/$defs) and older draft-compatible schemas. No remote
             // loader, coercion, defaults or property removal is enabled.
             registry.set(
                 fn.name,
-                new Ajv({ strict: false, validateFormats: false }).compile(
+                new Ajv2020({ strict: false, validateFormats: false }).compile(
                     fn.parameters,
                 ),
             );
         } catch {
             throw new ToolError(
-                "Invalid or unsupported tool parameter schema (use JSON Schema draft-07)",
+                "Invalid or unsupported JSON Schema tool parameters",
             );
         }
         return {
