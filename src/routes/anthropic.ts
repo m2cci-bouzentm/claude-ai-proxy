@@ -13,7 +13,7 @@ export function createAnthropicRouter() {
         authenticateAnthropic(req, res, next);
     };
     const forward = (req: Parameters<typeof authenticateAnthropic>[0], res: Parameters<typeof authenticateAnthropic>[1]) => { void proxyAnthropicMessages(req, res); };
-    router.post(["/v1/messages", "/v1/messages/count_tokens", "/v1/messages/cache_touch"], authenticate, forward);
+    router.post(["/v1/messages", "/v1/messages/count_tokens"], authenticate, forward);
     router.head("/api/hello", authenticate, forward);
     router.get(["/v1/models", "/v1/models/:model", "/api/oauth/usage", "/api/oauth/profile"], authenticate, forward);
     return router;

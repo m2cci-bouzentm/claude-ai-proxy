@@ -19,10 +19,10 @@ function parseSSE(text) {
 }
 async function runCases({ baseURL, apiKey, model = MODEL, session = 'http-e2e-stable-session', report = () => {} }) {
   const routes = new Set();
-  async function request(path, body, method = body ? 'POST' : 'GET') {
+  async function request(path, body, method = body ? 'POST' : 'GET', expectedStatus = 200) {
     routes.add(`${method} ${path}`);
     const response = await fetch(baseURL.replace(/\/$/, '') + path, { method, headers: { authorization: `Bearer ${apiKey}`, 'x-api-key': apiKey, 'content-type': 'application/json', 'anthropic-version': '2023-06-01', 'x-claude-code-session-id': session }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(120000) });
-    assert.ok(response.ok, `${method} ${path}: ${response.status} ${await (!response.ok ? response.text() : Promise.resolve(''))}`);
+    assert.equal(response.status, expectedStatus, `${method} ${path}: ${response.status} ${await (response.status !== expectedStatus ? response.text() : Promise.resolve(''))}`);
     return response;
   }
   assert.equal((await request('/health')).status, 200);
@@ -39,7 +39,7 @@ async function runCases({ baseURL, apiKey, model = MODEL, session = 'http-e2e-st
   assertUsage(await (await request('/openai/v1/chat/completions', openai(basic))).json(), 'openai');
   assertUsage(await (await request('/anthropic/v1/messages', anthropic(basic))).json(), 'anthropic');
   const count = await (await request('/anthropic/v1/messages/count_tokens', { model, messages: basic })).json(); assert.ok(count.input_tokens > 0);
-  await request('/anthropic/v1/messages/cache_touch', { model, messages: basic });
+  await request('/anthropic/v1/messages/cache_touch', { model, messages: basic }, 'POST', 404);
   for (const protocol of ['openai', 'anthropic']) {
     const path = protocol === 'openai' ? '/openai/v1/chat/completions' : '/anthropic/v1/messages';
     const body = protocol === 'openai' ? openai(basic) : anthropic(basic);

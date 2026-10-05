@@ -29,7 +29,7 @@ Works with any OpenAI SDK — just change `base_url` to `http://localhost:4181/o
 | POST | `/openai/v1/chat/completions` | Yes | Unified text/tools/images/caching |
 | POST | `/anthropic/v1/messages` | Yes | Native Messages and incremental SSE |
 | POST | `/anthropic/v1/messages/count_tokens` | Yes | Native token counting |
-| POST | `/anthropic/v1/messages/cache_touch` | Yes | Claude Code cache maintenance |
+
 | GET | `/anthropic/v1/models` | Yes | Upstream model discovery/pagination |
 | GET | `/anthropic/v1/models/:model` | Yes | Upstream model details |
 | GET | `/anthropic/api/oauth/usage` | Yes | Central account usage/limits |

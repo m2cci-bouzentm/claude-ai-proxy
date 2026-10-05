@@ -49,13 +49,24 @@ Exactly 11 method/routes:
 3. POST `/openai/v1/chat/completions`
 4. POST `/anthropic/v1/messages`
 5. POST `/anthropic/v1/messages/count_tokens`
-6. POST `/anthropic/v1/messages/cache_touch`
-7. GET `/anthropic/v1/models`
-8. GET `/anthropic/v1/models/:model`
-9. GET `/anthropic/api/oauth/usage`
-10. GET `/anthropic/api/oauth/profile`
-11. HEAD `/anthropic/api/hello`
+6. GET `/anthropic/v1/models`
+7. GET `/anthropic/v1/models/:model`
+8. GET `/anthropic/api/oauth/usage`
+9. GET `/anthropic/api/oauth/profile`
+10. HEAD `/anthropic/api/hello`
+
+Removed `/anthropic/v1/messages/cache_touch` is asserted as 404 because live upstream does not support it.
 
 Both protocols: JSON text, text SSE, inline PNG, forced tool call, tool-result continuation, streamed tool arguments, long-prefix cache warmup followed by **two** identical repeats. Cache checks require positive finite OpenAI `usage.prompt_tokens_details.cached_tokens` / Anthropic `usage.cache_read_input_tokens`; input/output counters must also be positive. No fallback estimates, relaxed zero assertions, or live synthetic usage. Negative unit checks prove absent usage, absent/zero cache, and absent input/output counters fail. Native count_tokens requires positive provider response; OAuth usage requires finite utilization.
 
-Live provider/account may reject cache_touch or administrative endpoints, model IDs, or return zero cache after warmup. Runner fails rather than skipping these requirements. Provider cache behavior and upstream session identity must be confirmed with real inference separately.
+Live provider/account may reject administrative endpoints, model IDs, or return zero cache after warmup. Runner fails rather than skipping these requirements. Provider cache behavior and upstream session identity must be confirmed with real inference separately.
+
+## Live rerun after Docker repair
+
+Container startup and credential-copy loading passed. Health, both model lists,
+model lookup, token counting, OAuth usage/profile and hello returned 200. Live
+upstream confirmed `/cache_touch` unsupported (404), so route was removed and a
+404 regression added. Both inference endpoints and isolated Claude Code returned
+429 because account weekly utilization was 100%; reset reported by provider:
+2026-10-05T15:00:00Z. Therefore real prompt-cache counters, images, tools and
+Claude Code tool execution remain blocked by provider quota, not marked passed.

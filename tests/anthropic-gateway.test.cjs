@@ -60,7 +60,7 @@ test('native gateway authenticates, preserves request, replaces credentials, str
     const count = await fetch(url + '/count_tokens', { method: 'POST', headers: { ...nativeHeaders, 'content-type': 'application/json' }, body: JSON.stringify(body) });
     assert.equal(count.status, 200); assert.equal((await count.json()).input_tokens, 42);
     const touch = await fetch(url + '/cache_touch', { method: 'POST', headers: { ...nativeHeaders, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    assert.equal(touch.status, 204);
+    assert.equal(touch.status, 404);
     captures.length = 0;
     const response = await post(body, { 'anthropic-beta': 'custom-beta,oauth-2025-04-20', 'anthropic-version': '2023-06-01', 'x-stainless-retry-count': '2', 'x-claude-code-session-id': 'client-stable-session' });
     assert.equal(response.status, 200); const result = await response.json(); assert.equal(result.content[0].text, 'ok');
