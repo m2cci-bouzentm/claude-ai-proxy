@@ -163,8 +163,10 @@ export function prepareToolRequest(
     }
     // Preserve text-client reasoning while never combining adaptive thinking with forced tools.
     if (!tools.length && !model.toLowerCase().includes("haiku")) request.thinking = { type: "adaptive" };
-    request.temperature = input.temperature;
-    request.top_p = input.top_p;
+    if (!request.thinking) {
+        request.temperature = input.temperature;
+        request.top_p = input.top_p;
+    }
     request.stop_sequences = input.stop;
     return {
         request,

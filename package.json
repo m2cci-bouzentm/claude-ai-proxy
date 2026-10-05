@@ -7,7 +7,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test tests/*.test.cjs",
+    "test": "npm run build && SYSTEM_PROMPT_PATH=./data/system_prompt.json node --test tests/*.test.cjs",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "setup": "bash setup.sh"
