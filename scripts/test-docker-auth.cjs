@@ -108,12 +108,12 @@ function rejected(r) {assert.notEqual(r.status,0);assert.equal(r.stdout,'');}
     rejected(command(['import','-'],JSON.stringify(syntheticAuth),['PROXY_AUTH_DIR=/data/linked']));
     fs.writeFileSync(path.join(scratch,'claude'),`#!/usr/bin/env node\nconst f=require('fs'),p=require('path');console.log('STDOUT_LOGIN_PROMPT');console.error('STDERR_LOGIN_PROMPT');const d=process.env.CLAUDE_CONFIG_DIR;f.mkdirSync(d,{recursive:true});const file=p.join(d,'.credentials.json');try{f.unlinkSync(file)}catch{};const m=f.existsSync('/fixture/mode')?f.readFileSync('/fixture/mode','utf8'):'';if(m==='symlink'){f.writeFileSync('/data/generated-target.json','{}');f.symlinkSync('/data/generated-target.json',file)}else f.writeFileSync(file,m==='malformed'?'MALFORMED_SECRET_NEVER_PRINT {':JSON.stringify(m==='schema'?{claudeAiOauth:{accessToken:42}}:{claudeAiOauth:{accessToken:'${secretAccess}',refreshToken:'${secretRefresh}',expiresAt:${syntheticAuth.expires}}}));\n`,{mode:0o755});
     const env=['PATH=/fixture:/usr/local/bin:/usr/bin:/bin'];
-    const login=command(['login'],undefined,env);
+    const login=command(['login','--browser'],undefined,env);
     assert.equal(login.status,0,login.stderr);contract(JSON.parse(login.stdout),true);
     assert.match(login.stderr,/STDOUT_LOGIN_PROMPT/);assert.match(login.stderr,/STDERR_LOGIN_PROMPT/);
-    for(const mode of ['malformed','schema','symlink']) { fs.writeFileSync(path.join(scratch,'mode'),mode); const result=command(['login'],undefined,env); assert.notEqual(result.status,0,`generated credential ${mode} accepted`);rejected(result); }
+    for(const mode of ['malformed','schema','symlink']) { fs.writeFileSync(path.join(scratch,'mode'),mode); const result=command(['login','--browser'],undefined,env); assert.notEqual(result.status,0,`generated credential ${mode} accepted`);rejected(result); }
     docker('run','--rm','--network','none','-v',`${volumeName}:/data`,imageName,'node','-e',"const f=require('fs');f.rmSync('/data/.claude',{recursive:true,force:true});f.symlinkSync('/data/target','/data/.claude')");
-    rejected(command(['login'],undefined,env));
+    rejected(command(['login','--browser'],undefined,env));
     console.log('PASS: security rejection, exact status contract, login prompts stderr / JSON stdout');
     docker('run','-d','--name',serverName,'--network','none','-v',`${volumeName}:/data`,'-v',`${path.join(root,'scripts/docker-auth-provider-fixture.cjs')}:/app/auth-fixture.cjs:ro`,'-e','NODE_OPTIONS=--require=/app/auth-fixture.cjs','-e','API_KEY=fixture-inbound',imageName);
     const request=`(async()=>{for(let i=0;i<100;i++){try{await fetch('http://127.0.0.1:4181/health');break}catch{await new Promise(r=>setTimeout(r,100))}}const r=await fetch('http://127.0.0.1:4181/anthropic/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':'fixture-inbound'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:8,messages:[{role:'user',content:'local fixture'}]})});require('assert/strict').equal(r.status,200,await r.text())})().catch(e=>{console.error(e);process.exit(1)})`;

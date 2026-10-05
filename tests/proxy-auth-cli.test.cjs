@@ -163,3 +163,25 @@ process.exit(1);
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('proxy-auth token wizard values save pasted fields one by one', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-token-wizard-'));
+  const previous = process.env.PROXY_AUTH_DIR;
+  try {
+    process.env.PROXY_AUTH_DIR = tmpDir;
+    const { runTokenWizardImport } = require('../dist/cli');
+    const status = runTokenWizardImport({ access: 'wizard-access', refresh: 'wizard-refresh',
+      expires: new Date(Date.now() + 3600000).toISOString() });
+    assert.equal(status.configured, true);
+    assert.equal(status.accessPresent, true);
+    assert.equal(status.refreshPresent, true);
+    const stored = JSON.parse(fs.readFileSync(path.join(tmpDir, 'auth.json'), 'utf8'));
+    assert.equal(stored.access, 'wizard-access');
+    assert.equal(stored.refresh, 'wizard-refresh');
+    assert.equal(runTokenWizardImport({ access: '', refresh: 'refresh-only', expires: '' }).isExpired, true);
+    assert.throws(() => runTokenWizardImport({ access: 'access-only', refresh: '', expires: '' }), /expiry/i);
+  } finally {
+    if (previous === undefined) delete process.env.PROXY_AUTH_DIR; else process.env.PROXY_AUTH_DIR = previous;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

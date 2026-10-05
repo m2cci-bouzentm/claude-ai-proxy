@@ -51,6 +51,24 @@ export function runImport(source: string): AuthStatus {
     normalizeAndSave(parsed);
     return runStatus();
 }
+export interface TokenWizardValues { access: string; refresh: string; expires: string; }
+function parseExpiry(raw: string, access: string): number {
+    const value = raw.trim();
+    if (value) {
+        const numeric = Number(value);
+        const parsed = Number.isFinite(numeric) ? (numeric < 1e12 ? numeric * 1000 : numeric) : Date.parse(value);
+        if (!Number.isFinite(parsed) || !Number.isFinite(new Date(parsed).getTime())) throw new Error("Invalid expiry; use ISO date, epoch seconds, or epoch milliseconds");
+        return parsed;
+    }
+    if (!access) return 0;
+    throw new Error("Expiry is required when importing an access token");
+}
+export function runTokenWizardImport(values: TokenWizardValues): AuthStatus {
+    const access = values.access.trim(), refresh = values.refresh.trim();
+    normalizeAndSave({ type: "oauth", access, refresh, expires: parseExpiry(values.expires, access),
+        scopes: [], subscriptionType: null, rateLimitTier: null });
+    return getStatus();
+}
 
 export function runLogin(options: RunLoginOptions = {}): AuthStatus {
     const authDir = ensureAuthDir();

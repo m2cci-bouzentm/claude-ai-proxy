@@ -18,24 +18,17 @@ stdin attached for interactive codes. Browser login is the native default;
 terminal/browser environment, not inherited API keys, provider settings, proxy
 secrets, or Node injection options. Imports accept at most 64 KiB, reject symlinks
 and non-regular files, and report malformed JSON without credential excerpts.
-Copy `.env.example` to `.env` before running Compose:
+Inside the running container, execute one command:
 
 ```bash
-# Check status (configured, type, expiresAt, isExpired, subscriptionType)
-docker compose run --rm claude-proxy proxy-auth status
-# Or directly:
-docker compose run --rm claude-proxy status
-
-# Interactive login using official @anthropic-ai/claude-code CLI inside container:
-# Uses isolated configuration directory inside /data/.claude
-docker compose run --rm claude-proxy proxy-auth login --browser
-# Optional flags: --sso, --console, --email <address>
-
-# Import credentials from JSON file or stdin:
-# Accepts native Claude .credentials.json (claudeAiOauth) or normalized OAuth JSON
-docker compose run --rm -v $(pwd)/my-creds.json:/tmp/creds.json:ro claude-proxy proxy-auth import --file /tmp/creds.json
-cat my-creds.json | docker compose run --rm -T claude-proxy proxy-auth import -
+proxy-auth login
 ```
+Interactive menu offers browser login, SSO login, Anthropic Console login, or
+hidden field-by-field token paste. `proxy-auth import` opens the token-paste
+wizard directly and asks for access token, refresh token, and expiry one by one.
+Access-only and refresh-only transfers work; at least one token is required.
+JSON file/stdin forms remain available only for automation. Run
+`proxy-auth status` to inspect redacted credential metadata.
 
 The running server automatically reloads credentials when `/data/auth.json` is updated, without needing a restart. Seeding from local Claude credentials is completely non-destructive (never deletes source files).
 
