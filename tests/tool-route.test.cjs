@@ -30,17 +30,16 @@ function fixture({ calls = [{ id: 'toolu_one', name: 'echo', input: { text: 'caf
   return new Response(new ReadableStream({ start(c) { for (const b of bytes) c.enqueue(Uint8Array.of(b)); c.close(); } }));
 }
 
-test('tool round trip preserves schemas, IDs, consumer instructions at user level, and parallel results', async () => {
+test('tool round trip preserves schemas, IDs, consumer system instructions, and parallel results', async () => {
   const p = prepareToolRequest(request({ messages: [{ role: 'system', content: 'Be concise' }, { role: 'developer', content: 'Use the caller workspace' }, { role: 'user', content: 'Echo café' }], tool_choice: 'required' }), 'fallback');
   assert.deepEqual(p.request.tools[0].input_schema, tool.function.parameters);
   assert.deepEqual(p.request.tool_choice, { type: 'any' });
-  assert.equal(p.request.system, undefined);
-  assert.equal(p.request.messages[0].role, 'user');
-  const prefix = p.request.messages[0].content[0].text;
-  assert.deepEqual(JSON.parse(prefix.slice(prefix.indexOf('\n') + 1)), [
-    { source_role: 'system', content: 'Be concise' }, { source_role: 'developer', content: 'Use the caller workspace' },
+  assert.deepEqual(p.request.system, [
+    { type: 'text', text: '[system]\nBe concise' },
+    { type: 'text', text: '[developer]\nUse the caller workspace' },
   ]);
-  assert.equal(p.request.messages[0].content[1].text, 'Echo café');
+  assert.equal(p.request.messages[0].role, 'user');
+  assert.equal(p.request.messages[0].content[0].text, 'Echo café');
   const result = await collectToolResponse(fixture(), p);
   assert.equal(result.choices[0].finish_reason, 'tool_calls');
   assert.equal(result.usage.prompt_tokens, 7);
@@ -92,7 +91,7 @@ test('HTTP SSE uses stable IDs, usage, finish and DONE; disconnect aborts upstre
   const thinking = { type: 'thinking', thinking: 'Signed reasoning', signature: 'opaque-signature' };
   let aborted;
   const disconnected = new Promise(resolve => { aborted = resolve; });
-  app.use('/tools/v1', createToolRouter(async (body, signal) => {
+  app.use('/openai/v1', createToolRouter(async (body, signal) => {
     if (body.model === 'disconnect') {
       return new Promise((_resolve, reject) => signal.addEventListener('abort', () => { aborted(); reject(new Error('aborted')); }, { once: true }));
     }
@@ -100,7 +99,7 @@ test('HTTP SSE uses stable IDs, usage, finish and DONE; disconnect aborts upstre
   }, 'fallback'));
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
-  const url = `http://127.0.0.1:${server.address().port}/tools/v1/chat/completions`;
+  const url = `http://127.0.0.1:${server.address().port}/openai/v1/chat/completions`;
   try {
     const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request({ stream: true, stream_options: { include_usage: true } })) });
     assert.equal(response.status, 200);
@@ -130,11 +129,12 @@ test('server cache policy leaves message roles/content intact and ignores client
     const original = structuredClone(input);
     const enabled = prepareToolRequest(input, '').request;
     assert.deepEqual(enabled.cache_control, { type: 'ephemeral', ttl: '5m' });
-    assert.equal(enabled.system, undefined);
+    assert.deepEqual(enabled.system, [
+      { type: 'text', text: '[system]\nSYSTEM_USER_CONTEXT' },
+      { type: 'text', text: '[developer]\nDEVELOPER_USER_CONTEXT' },
+    ]);
     assert.equal(enabled.messages[0].role, 'user');
-    assert.match(enabled.messages[0].content[0].text, /SYSTEM_USER_CONTEXT/);
-    assert.match(enabled.messages[0].content[0].text, /DEVELOPER_USER_CONTEXT/);
-    assert.deepEqual(enabled.messages[0].content[1], { type: 'text', text: 'hello' });
+    assert.deepEqual(enabled.messages[0].content[0], { type: 'text', text: 'hello' });
     assert.deepEqual(input, original);
     process.env.TOOL_PROMPT_CACHE_TTL = 'off';
     const disabled = prepareToolRequest(input, '').request;
@@ -161,19 +161,19 @@ test('JSON usage separates cache reads/writes without double-counting total inpu
   }
 });
 
-test('images preserve ordering, user-level instructions and tool-result history', () => {
+test('images preserve ordering, system instructions and tool-result history', () => {
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=';
   const img = { type: 'image_url', image_url: { url: 'data:image/png;base64,' + png, detail: 'high' } };
   const parts = [{ type: 'text', text: 'before' }, img, { type: 'text', text: 'after' },
     { type: 'image_url', image_url: { url: 'https://example.com/picture.png' } }];
   const p = prepareToolRequest(request({ messages: [{ role: 'system', content: 'consumer' }, { role: 'user', content: parts }] }), 'fallback').request;
-  assert.equal(p.system, undefined);
+  assert.deepEqual(p.system, [{ type: 'text', text: '[system]\nconsumer' }]);
   assert.equal(p.messages[0].role, 'user');
-  assert.deepEqual(p.messages[0].content.slice(1), [parts[0], { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }, parts[2], { type: 'image', source: { type: 'url', url: 'https://example.com/picture.png' } }]);
+  assert.deepEqual(p.messages[0].content, [parts[0], { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }, parts[2], { type: 'image', source: { type: 'url', url: 'https://example.com/picture.png' } }]);
   const follow = prepareToolRequest(request({ messages: [{ role: 'user', content: 'look' },
     { role: 'assistant', content: null, tool_calls: [{ id: 'image_call', type: 'function', function: { name: 'echo', arguments: '{}' } }] },
     { role: 'tool', tool_call_id: 'image_call', content: [img] }] }), 'fallback').request;
-  assert.deepEqual(follow.messages[2].content[0], { type: 'tool_result', tool_use_id: 'image_call', content: [p.messages[0].content[2]] });
+  assert.deepEqual(follow.messages[2].content[0], { type: 'tool_result', tool_use_id: 'image_call', content: [p.messages[0].content[1]] });
   for (const url of ['file:///etc/passwd', 'https://user:pass@example.com/a', 'data:image/svg+xml;base64,AAAA', 'data:image/png;base64,%%%', 'data:image/png;base64,AB==', 'data:image/png;base64,' + Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64')]) {
     assert.throws(() => prepareToolRequest(request({ messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url } }] }] }), 'fallback'));
   }
@@ -193,7 +193,7 @@ test('request boundary rejects invalid shapes without coercion or forwarding', a
     for (const extra of [
       { messages: [] }, { messages: [{ role: 'invalid', content: 'hi' }] },
       { messages: [{ role: 'user', content: 42 }] }, { stream: 'true' },
-      { max_tokens: '100' }, { temperature: 2 }, { stream_options: { include_usage: 1 } },
+      { max_tokens: '100' }, { temperature: 2.1 }, { stream_options: { include_usage: 1 } },
       { tools: [{ type: 'function', function: { name: 42 } }] },
       { response_format: { type: 'json_object' } },
       { messages: [...request().messages, { role: 'assistant', content: null,
@@ -220,12 +220,24 @@ test('schema normalization preserves text, options and local parameter reference
       ...request().messages], stop: 'END', temperature: 0, top_p: 1, max_completion_tokens: 100,
   }), 'fallback');
   assert.deepEqual(p.request.tools[0].input_schema, parameters);
-  assert.match(p.request.messages[0].content[0].text, /first\\nsecond/);
+  assert.equal(p.request.system[0].text, '[system]\nfirst\nsecond');
   assert.deepEqual(p.request.stop_sequences, ['END']);
   assert.equal(p.request.max_tokens, 100);
   assert.equal(p.request.temperature, 0);
   assert.equal(p.request.top_p, 1);
   await collectToolResponse(fixture(), p);
+  const opencodeParameters = {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    type: 'object',
+    $defs: { text: { type: 'string' } },
+    properties: { text: { $ref: '#/$defs/text' } },
+    required: ['text'],
+  };
+  const opencode = prepareToolRequest(request({
+    tools: [{ type: 'function', function: { name: 'echo', parameters: opencodeParameters } }],
+  }), 'fallback');
+  assert.deepEqual(opencode.request.tools[0].input_schema, opencodeParameters);
+  await collectToolResponse(fixture(), opencode);
   await assert.rejects(collectToolResponse(fixture({ calls: [{ id: 'a', name: 'echo', input: { text: 1 } }] }), p));
 });
 

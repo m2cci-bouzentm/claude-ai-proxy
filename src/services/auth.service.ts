@@ -1,127 +1,75 @@
 import type { TokenResponse, AuthResult, OAuthEntry } from "../types/auth";
+import { tokenResponseSchema } from "../schemas/auth.schema";
 import * as storage from "../lib/auth-storage";
-import {
-    readClaudeCredentials,
-    deleteClaudeCredentials,
-} from "../lib/keychain";
-
-const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
-const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-const SCOPES = [
-    "user:profile",
-    "user:inference",
-    "user:sessions:claude_code",
-    "user:mcp_servers",
-    "user:file_upload",
-];
+import { readClaudeCredentials } from "../lib/keychain";
+import { config } from "../config";
+import path from "path";
 
 export { AUTH_FILE } from "../lib/auth-storage";
-
-// First run: seeds from Claude Code (keychain on macOS, plaintext on Linux),
-// then deletes the source so user can /login fresh for an independent CLI token.
-// After seed, refreshes independently via ~/.claude-proxy/auth.json.
-
-function seedFromClaude(): OAuthEntry {
-    const tokens = readClaudeCredentials();
-    if (!tokens?.accessToken) {
-        throw new Error(
-            "No Claude Code credentials found.\n" +
-                "Run `claude` and log in first, then restart the proxy.",
-        );
-    }
-    const entry: OAuthEntry = {
-        type: "oauth",
-        access: tokens.accessToken,
-        refresh: tokens.refreshToken,
-        expires: tokens.expiresAt,
-        scopes: tokens.scopes,
-        subscriptionType: tokens.subscriptionType,
-        rateLimitTier: tokens.rateLimitTier,
-    };
-    storage.write(entry);
-    console.log("[auth] seeded from Claude Code, stored in", storage.AUTH_FILE);
-
-    if (deleteClaudeCredentials()) {
-        console.log(
-            "[auth] deleted Claude Code credentials — run `claude` and /login for independent CLI token",
-        );
-    }
-
-    return entry;
-}
-
-async function refreshAccessToken(
-    refreshToken: string,
-): Promise<TokenResponse> {
-    const resp = await fetch(TOKEN_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            grant_type: "refresh_token",
-            refresh_token: refreshToken,
-            client_id: CLIENT_ID,
-            scope: SCOPES.join(" "),
-        }),
-    });
-    if (!resp.ok) {
-        const body = await resp.text();
-        throw new Error(`Token refresh failed (${resp.status}): ${body}`);
-    }
-    return resp.json();
-}
-
+const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
+const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 let currentAuth: OAuthEntry | null = null;
-let refreshPromise: Promise<void> | null = null;
-
-const REQUEST_BUFFER_MS = 5 * 60 * 1000;
-
-export async function getAuth(
-    bufferMs = REQUEST_BUFFER_MS,
-): Promise<AuthResult> {
-    currentAuth ??= storage.read() ?? seedFromClaude();
-
-    const needsRefresh =
-        !currentAuth.access || currentAuth.expires < Date.now() + bufferMs;
-    if (!needsRefresh) {
-        return {
-            accessToken: currentAuth.access,
-            subscriptionType: currentAuth.subscriptionType,
-            rateLimitTier: currentAuth.rateLimitTier,
-        };
+let generation: string | null = null;
+let initialized = false;
+let epoch = 0;
+let pending: { generation: string; epoch: number; promise: Promise<void> } | null = null;
+function reload(): void {
+    const snapshot = storage.readSnapshot();
+    currentAuth = snapshot?.entry ?? null;
+    generation = snapshot?.generation ?? null;
+}
+function initialize(): void {
+    if (initialized) return;
+    initialized = true;
+    // Never fall back from invalid canonical credentials, or after deletion.
+    if (!storage.canonicalMissing()) return;
+    let data: unknown;
+    if (process.platform === "darwin") {
+        const tokens = readClaudeCredentials();
+        data = { claudeAiOauth: tokens };
+    } else {
+        data = storage.readSecureJson(path.join(config.claudeHome, ".credentials.json")).data;
     }
-
-    refreshPromise ??= refreshAccessToken(currentAuth.refresh)
-        .then((tokens) => {
-            currentAuth = {
-                type: "oauth",
-                access: tokens.access_token,
-                refresh: tokens.refresh_token || currentAuth!.refresh,
-                expires: Date.now() + tokens.expires_in * 1000,
-                scopes: tokens.scope?.split(" ") || currentAuth!.scopes,
-                subscriptionType: currentAuth!.subscriptionType,
-                rateLimitTier: currentAuth!.rateLimitTier,
-            };
-            storage.write(currentAuth);
-            console.log(
-                `[auth] refreshed, expires ${new Date(currentAuth.expires).toISOString()}`,
-            );
-        })
-        .catch((err) => {
-            console.error(`[auth] refresh failed: ${err.message}`);
-            throw err;
-        })
-        .finally(() => {
-            refreshPromise = null;
-        });
-
-    await refreshPromise;
-    return {
-        accessToken: currentAuth!.access,
-        subscriptionType: currentAuth!.subscriptionType,
-        rateLimitTier: currentAuth!.rateLimitTier,
-    };
+    const entry = storage.normalize(data);
+    if (storage.canonicalMissing()) storage.write(entry);
 }
-
-export function clearAuth(): void {
-    currentAuth = null;
+function result(): AuthResult {
+    if (!currentAuth?.access) throw new Error("No valid Claude credentials configured. Run proxy-auth login or import.");
+    return { accessToken: currentAuth.access, subscriptionType: currentAuth.subscriptionType ?? null, rateLimitTier: currentAuth.rateLimitTier ?? null };
 }
+export async function getAuth(bufferMs = 5 * 60 * 1000): Promise<AuthResult> {
+    initialize();
+    reload();
+    if (!currentAuth || !generation) throw new Error("No valid Claude credentials configured. Run proxy-auth login or import.");
+    if (currentAuth.access && currentAuth.expires >= Date.now() + bufferMs) return result();
+    if (!currentAuth.refresh) {
+        if (currentAuth.expires > Date.now()) return result();
+        throw new Error("Claude access token expired; no refresh token available");
+    }
+    const snapshot = currentAuth, expected = generation, expectedEpoch = epoch;
+    if (!pending || pending.generation !== expected || pending.epoch !== expectedEpoch) {
+        const operation = { generation: expected, epoch: expectedEpoch, promise: Promise.resolve() };
+        operation.promise = (async () => {
+            const response = await fetch(TOKEN_URL, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ grant_type: "refresh_token", refresh_token: snapshot.refresh, client_id: CLIENT_ID, scope: "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload" }),
+            });
+            if (!response.ok) throw new Error(`Claude OAuth refresh failed (${response.status})`);
+            const rawTokens = await response.json();
+            const parsed = tokenResponseSchema.safeParse(rawTokens);
+            if (!parsed.success) throw new Error("Invalid OAuth refresh response");
+            const tokens = parsed.data;
+            const next = storage.normalize({ ...snapshot, access: tokens.access_token, refresh: tokens.refresh_token ?? snapshot.refresh, expires: Date.now() + tokens.expires_in * 1000, scopes: tokens.scope === undefined ? snapshot.scopes : tokens.scope.split(/\s+/).filter(Boolean) });
+            // Last synchronous operation before write: compare canonical file and local invalidation generation.
+            const latest = storage.readSnapshot();
+            if (epoch !== expectedEpoch || latest?.generation !== expected) { reload(); return; }
+            storage.write(next);
+            reload();
+        })().finally(() => { if (pending === operation) pending = null; });
+        pending = operation;
+    }
+    await pending.promise;
+    reload();
+    return result();
+}
+export function clearAuth(): void { epoch++; currentAuth = null; generation = null; }

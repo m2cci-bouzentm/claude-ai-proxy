@@ -4,24 +4,25 @@ import { config } from "./config";
 import { AUTH_FILE } from "./lib/auth-storage";
 import { authenticate } from "./middleware/auth";
 import { healthRouter } from "./routes/health";
-import { modelsRouter } from "./routes/models";
-import { chatRouter } from "./routes/chat";
-import { toolRouter } from "./routes/tools";
+import { openaiRouter } from "./routes/openai";
+import { anthropicRouter } from "./routes/anthropic";
 import { startJobs } from "./jobs";
 
 const app = express();
 app.use(cors());
-// Preserve the larger tool-route limit and the legacy 100 KiB limit.
-app.use("/tools/v1/chat/completions", express.json({ limit: "32mb" }));
+
+// Configure body parsers for high-capacity inference endpoints (32mb)
+app.use(["/openai/v1/chat/completions", "/anthropic"], express.json({ limit: "32mb" }));
 app.use(express.json());
 
 app.use("/health", healthRouter);
-app.use(["/v1", "/tools/v1"], modelsRouter);
-// Authentication stays scoped to completions; health/models remain public.
-app.post("/v1/chat/completions", authenticate);
-app.post("/tools/v1/chat/completions", authenticate);
-app.use("/v1", chatRouter);
-app.use("/tools/v1", toolRouter);
+
+// Authentication scoped to endpoints requiring proxy API key
+app.post("/openai/v1/chat/completions", authenticate);
+
+// Mount routers
+app.use("/openai/v1", openaiRouter);
+app.use("/anthropic", anthropicRouter);
 
 app.listen(config.port, () => {
     console.log(`claude-ai-proxy listening on :${config.port}`);
