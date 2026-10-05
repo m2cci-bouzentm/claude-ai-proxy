@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-const { runStatus, runImport, runLogin } = require("../dist/cli.js");
-
+const { runImport, runLogin, runStatus } = require("../dist/cli.js");
 function printUsageAndExit() {
     process.stderr.write(`Usage: proxy-auth <command> [options]
 

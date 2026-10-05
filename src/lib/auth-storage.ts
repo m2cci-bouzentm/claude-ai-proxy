@@ -1,199 +1,80 @@
 import fs from "fs";
 import path from "path";
+import { randomUUID } from "crypto";
 import type { OAuthEntry, AuthStatus } from "../types/auth";
 
-export function getAuthDir(): string {
-    return process.env.PROXY_AUTH_DIR || process.env.CLAUDE_PROXY_HOME || "/data";
-}
-
-export function getAuthFile(): string {
-    return path.join(getAuthDir(), "auth.json");
-}
-
-// Deprecated alias for backward compatibility
+export function getAuthDir(): string { return process.env.PROXY_AUTH_DIR || process.env.CLAUDE_PROXY_HOME || "/data"; }
+export function getAuthFile(): string { return path.join(getAuthDir(), "auth.json"); }
 export const AUTH_FILE = getAuthFile();
-
-export function ensureAuthDir(): string {
-    const dir = getAuthDir();
-    const oldUmask = process.umask(0o077);
-    try {
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-        } else {
-            try {
-                fs.chmodSync(dir, 0o700);
-            } catch {
-                // Best effort if permissions cannot be modified
-            }
-        }
-    } finally {
-        process.umask(oldUmask);
-    }
+const MAX_BYTES = 64 * 1024;
+export function secureDirectory(dir: string, create = false): string {
+    if (create) { try { fs.lstatSync(dir); } catch (e: any) { if (e.code !== "ENOENT") throw e; fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } }
+    const stat = fs.lstatSync(dir);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("Insecure directory: symlink or not directory");
+    if (process.getuid && stat.uid !== process.getuid()) throw new Error("Insecure directory owner");
+    fs.chmodSync(dir, 0o700);
     return dir;
 }
-
-export function assertSafeFile(filePath: string): void {
-    if (!fs.existsSync(filePath)) return;
-    const lstat = fs.lstatSync(filePath);
-    if (lstat.isSymbolicLink()) {
-        throw new Error(`Insecure file path: ${filePath} is a symlink`);
-    }
-    if (!lstat.isFile()) {
-        throw new Error(`Insecure file path: ${filePath} is not a regular file`);
-    }
+export function ensureAuthDir(): string { return secureDirectory(getAuthDir(), true); }
+export function assertSafeFile(file: string): void {
+    let stat; try { stat = fs.lstatSync(file); } catch (e: any) { if (e.code === "ENOENT") return; throw e; }
+    if (stat.isSymbolicLink()) throw new Error("Insecure file: symlink");
+    if (!stat.isFile()) throw new Error("Insecure file: not regular file");
+    if (process.getuid && stat.uid !== process.getuid()) throw new Error("Insecure file owner");
 }
-
-export function read(): OAuthEntry | null {
-    const file = getAuthFile();
-    if (!fs.existsSync(file)) return null;
-    assertSafeFile(file);
+export function readSecureJson(file: string): { data: unknown; generation: string } {
+    secureDirectory(path.dirname(file));
+    const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     try {
-        const raw = fs.readFileSync(file, "utf-8");
-        const parsed = JSON.parse(raw);
-        if (
-            parsed &&
-            typeof parsed === "object" &&
-            parsed.type === "oauth" &&
-            typeof parsed.access === "string" &&
-            typeof parsed.refresh === "string"
-        ) {
-            return {
-                type: "oauth",
-                access: parsed.access,
-                refresh: parsed.refresh,
-                expires: typeof parsed.expires === "number" ? parsed.expires : 0,
-                scopes: Array.isArray(parsed.scopes) ? parsed.scopes : undefined,
-                subscriptionType: parsed.subscriptionType ?? null,
-                rateLimitTier: parsed.rateLimitTier ?? null,
-            };
-        }
-        return null;
-    } catch {
-        return null;
-    }
+        const stat = fs.fstatSync(fd, { bigint: true });
+        if (!stat.isFile() || stat.size > BigInt(MAX_BYTES) || (process.getuid && stat.uid !== BigInt(process.getuid()))) throw new Error("Insecure credential file");
+        const buffer = Buffer.alloc(MAX_BYTES + 1);
+        let size = 0, count;
+        while (size < buffer.length && (count = fs.readSync(fd, buffer, size, buffer.length - size, null)) > 0) size += count;
+        if (size > MAX_BYTES) throw new Error("Credential file too large");
+        const raw = buffer.subarray(0, size).toString("utf8");
+        return { data: JSON.parse(raw), generation: `${file}:${stat.dev}:${stat.ino}:${stat.mtimeNs}:${stat.ctimeNs}:${raw}` };
+    } finally { fs.closeSync(fd); }
 }
-
-export function write(entry: OAuthEntry): void {
-    const dir = ensureAuthDir();
-    const file = getAuthFile();
+export function normalize(data: unknown): OAuthEntry {
+    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid credential schema");
+    const root = data as Record<string, any>;
+    const native = Object.hasOwn(root, "claudeAiOauth");
+    const obj = native ? root.claudeAiOauth : root;
+    if (!obj || typeof obj !== "object" || Array.isArray(obj) || (!native && obj.type !== "oauth")) throw new Error("Invalid credential schema");
+    const access = obj[native ? "accessToken" : "access"] ?? "";
+    const refresh = obj[native ? "refreshToken" : "refresh"] ?? "";
+    if (typeof access !== "string" || typeof refresh !== "string" || (!access.trim() && !refresh.trim())) throw new Error("Invalid credential: missing access/refresh");
+    const expiry = obj[native ? "expiresAt" : "expires"];
+    if ((expiry === undefined && access.trim()) || (expiry !== undefined && (typeof expiry !== "number" || !Number.isFinite(expiry) || !Number.isFinite(new Date(expiry).getTime())))) throw new Error("Invalid credential expiry");
+    if (obj.scopes !== undefined && (!Array.isArray(obj.scopes) || !obj.scopes.every((s: unknown) => typeof s === "string"))) throw new Error("Invalid credential scopes");
+    for (const key of ["subscriptionType", "rateLimitTier"]) if (obj[key] !== undefined && obj[key] !== null && typeof obj[key] !== "string") throw new Error("Invalid credential metadata");
+    return { type: "oauth", access, refresh, expires: expiry ?? 0, ...(obj.scopes === undefined ? {} : { scopes: [...obj.scopes] }), subscriptionType: obj.subscriptionType ?? null, rateLimitTier: obj.rateLimitTier ?? null };
+}
+export function readSnapshot(): { entry: OAuthEntry; generation: string } | null {
+    try { const result = readSecureJson(getAuthFile()); return { entry: normalize(result.data), generation: result.generation }; } catch { return null; }
+}
+export function read(): OAuthEntry | null { return readSnapshot()?.entry ?? null; }
+export function canonicalMissing(): boolean {
+    try { fs.lstatSync(getAuthFile()); return false; } catch (e: any) { if (e.code === "ENOENT") return true; throw e; }
+}
+export function write(input: OAuthEntry): void {
+    const entry = normalize(input);
+    const raw = JSON.stringify(entry, null, 2);
+    if (Buffer.byteLength(raw) > MAX_BYTES) throw new Error("Credential file too large");
+    const dir = ensureAuthDir(), file = getAuthFile();
     assertSafeFile(file);
-
-    const oldUmask = process.umask(0o077);
-    const tempFile = path.join(
-        dir,
-        `.auth.json.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`,
-    );
+    const temp = path.join(dir, `.auth.json.tmp.${randomUUID()}`);
+    let created = false;
     try {
-        fs.writeFileSync(tempFile, JSON.stringify(entry, null, 2), {
-            mode: 0o600,
-            encoding: "utf-8",
-        });
-        fs.chmodSync(tempFile, 0o600);
-        fs.renameSync(tempFile, file);
-        fs.chmodSync(file, 0o600);
-    } finally {
-        process.umask(oldUmask);
-        if (fs.existsSync(tempFile)) {
-            try {
-                fs.unlinkSync(tempFile);
-            } catch {}
-        }
-    }
+        const fd = fs.openSync(temp, "wx", 0o600); created = true;
+        try { fs.fchmodSync(fd, 0o600); fs.writeFileSync(fd, raw, "utf8"); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+        assertSafeFile(file);
+        fs.renameSync(temp, file);
+    } finally { if (created) { try { fs.unlinkSync(temp); } catch (e: any) { if (e.code !== "ENOENT") throw e; } } }
 }
-
-export function normalizeAndSave(data: unknown): OAuthEntry {
-    if (!data || typeof data !== "object") {
-        throw new Error("Invalid credential data: expected JSON object");
-    }
-
-    const obj = data as Record<string, any>;
-
-    // Case 1: Native Claude credentials structure: {"claudeAiOauth": {"accessToken", "refreshToken", "expiresAt", "scopes", ...}}
-    if (obj.claudeAiOauth && typeof obj.claudeAiOauth === "object") {
-        const {
-            accessToken,
-            refreshToken,
-            expiresAt,
-            scopes,
-            subscriptionType,
-            rateLimitTier,
-        } = obj.claudeAiOauth;
-        if (
-            !accessToken ||
-            typeof accessToken !== "string" ||
-            !refreshToken ||
-            typeof refreshToken !== "string"
-        ) {
-            throw new Error(
-                "Invalid native Claude credential: empty or missing accessToken/refreshToken",
-            );
-        }
-
-        const entry: OAuthEntry = {
-            type: "oauth",
-            access: accessToken,
-            refresh: refreshToken,
-            expires:
-                typeof expiresAt === "number"
-                    ? expiresAt
-                    : Date.now() + 3600 * 1000,
-            scopes: Array.isArray(scopes) ? scopes : undefined,
-            subscriptionType: subscriptionType ?? null,
-            rateLimitTier: rateLimitTier ?? null,
-        };
-        write(entry);
-        return entry;
-    }
-
-    // Case 2: Normalized OAuth structure: {"type":"oauth", "access", "refresh", "expires", ...}
-    if (obj.type === "oauth" || (obj.access && obj.refresh)) {
-        if (
-            !obj.access ||
-            typeof obj.access !== "string" ||
-            !obj.refresh ||
-            typeof obj.refresh !== "string"
-        ) {
-            throw new Error(
-                "Invalid normalized OAuth credential: empty or missing access/refresh",
-            );
-        }
-
-        const entry: OAuthEntry = {
-            type: "oauth",
-            access: obj.access,
-            refresh: obj.refresh,
-            expires:
-                typeof obj.expires === "number"
-                    ? obj.expires
-                    : Date.now() + 3600 * 1000,
-            scopes: Array.isArray(obj.scopes) ? obj.scopes : undefined,
-            subscriptionType: obj.subscriptionType ?? null,
-            rateLimitTier: obj.rateLimitTier ?? null,
-        };
-        write(entry);
-        return entry;
-    }
-
-    throw new Error(
-        "Invalid credential format: unrecognized schema (expected native Claude claudeAiOauth or normalized oauth)",
-    );
-}
-
+export function normalizeAndSave(data: unknown): OAuthEntry { const entry = normalize(data); write(entry); return entry; }
 export function getStatus(): AuthStatus {
     const entry = read();
-    if (!entry) {
-        return { configured: false };
-    }
-
-    const isExpired =
-        typeof entry.expires === "number" && entry.expires <= Date.now();
-    return {
-        configured: true,
-        type: entry.type || "oauth",
-        expiresAt: entry.expires ? new Date(entry.expires).toISOString() : undefined,
-        isExpired,
-        scopes: entry.scopes,
-        subscriptionType: entry.subscriptionType,
-        rateLimitTier: entry.rateLimitTier,
-    };
+    return { configured: !!entry, type: entry?.type ?? null, provider: "claude", expiresAt: entry ? new Date(entry.expires).toISOString() : null, isExpired: entry ? entry.expires <= Date.now() : false, accessPresent: !!entry?.access, refreshPresent: !!entry?.refresh, accountIdPresent: false, subscriptionType: entry?.subscriptionType ?? null, rateLimitTier: entry?.rateLimitTier ?? null };
 }

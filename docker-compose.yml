@@ -7,7 +7,7 @@ services:
     environment:
       - PROXY_AUTH_DIR=/data
     volumes:
-      - ${PROXY_AUTH_DIR:-claude-proxy-data}:/data
+      - ${PROXY_AUTH_VOLUME:-claude-proxy-data}:/data
     env_file:
       - .env
     restart: unless-stopped

@@ -1,11 +1,7 @@
-import fs from "fs";
-import path from "path";
-import { spawnSync } from "child_process";
-import {
-    ensureAuthDir,
-    normalizeAndSave,
-    getStatus,
-} from "./lib/auth-storage";
+import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { ensureAuthDir, normalizeAndSave, getStatus } from "./lib/auth-storage";
 import type { AuthStatus } from "./types/auth";
 
 export interface RunLoginOptions {
@@ -19,88 +15,63 @@ export function runStatus(): AuthStatus {
     return getStatus();
 }
 
-export function runImport(source: string): AuthStatus {
-    let content = "";
-    if (source === "-") {
-        content = fs.readFileSync(0, "utf-8");
-    } else {
-        if (!fs.existsSync(source)) {
-            throw new Error(`Import file not found: ${source}`);
-        }
-        const lstat = fs.lstatSync(source);
-        if (lstat.isSymbolicLink()) {
-            throw new Error(`Insecure file: ${source} is a symbolic link`);
-        }
-        if (!lstat.isFile()) {
-            throw new Error(`Insecure file: ${source} is not a regular file`);
-        }
-        content = fs.readFileSync(source, "utf-8");
-    }
+const MAX_IMPORT_BYTES = 64 * 1024;
 
-    let parsed: unknown;
+function readBounded(source: string): string {
+    let fd: number | undefined;
+    const ownsFd = source !== "-";
     try {
-        parsed = JSON.parse(content);
+        fd = ownsFd ? fs.openSync(source, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK) : 0;
+        const stat = fs.fstatSync(fd);
+        if (ownsFd && !stat.isFile()) throw new Error("Import source must be a regular file");
+        if (stat.size > MAX_IMPORT_BYTES) throw new Error("Credentials exceed 64 KiB limit");
+        const buffer = Buffer.alloc(MAX_IMPORT_BYTES + 1);
+        let used = 0;
+        while (used < buffer.length) {
+            const count = fs.readSync(fd, buffer, used, buffer.length - used, null);
+            if (!count) break;
+            used += count;
+        }
+        if (used > MAX_IMPORT_BYTES) throw new Error("Credentials exceed 64 KiB limit");
+        return buffer.subarray(0, used).toString("utf8");
     } catch (err: any) {
-        throw new Error(`Failed to parse import JSON: ${err.message}`);
+        if (err.code === "ELOOP") throw new Error("Import source must not be a symlink");
+        if (err.code) throw new Error("Unable to read credential import source");
+        throw err;
+    } finally {
+        if (ownsFd && fd !== undefined) fs.closeSync(fd);
     }
+}
 
+export function runImport(source: string): AuthStatus {
+    const content = readBounded(source);
+    let parsed;
+    try { parsed = JSON.parse(content); }
+    catch { throw new Error("Invalid credential JSON"); }
     normalizeAndSave(parsed);
-    return getStatus();
+    return runStatus();
 }
 
 export function runLogin(options: RunLoginOptions = {}): AuthStatus {
     const authDir = ensureAuthDir();
     const isolatedConfigDir = path.join(authDir, ".claude");
-    if (!fs.existsSync(isolatedConfigDir)) {
-        fs.mkdirSync(isolatedConfigDir, { recursive: true, mode: 0o700 });
-    }
-
-    // CLI executable: 'claude auth login'
+    if (!fs.existsSync(isolatedConfigDir)) fs.mkdirSync(isolatedConfigDir, { mode: 0o700 });
+    const stat = fs.lstatSync(isolatedConfigDir);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("Unsafe login configuration directory");
+    fs.chmodSync(isolatedConfigDir, 0o700);
     const args = ["auth", "login"];
-    if (options.sso) {
-        args.push("--sso");
+    if (options.sso) args.push("--sso");
+    if (options.console) args.push("--console");
+    if (options.email) args.push("--email", options.email);
+    // Browser authentication is the native default; no --browser flag exists upstream.
+    const env: NodeJS.ProcessEnv = {};
+    for (const key of ["PATH", "TERM", "COLORTERM", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "BROWSER", "SystemRoot", "WINDIR", "PATHEXT"]) {
+        if (process.env[key] !== undefined) env[key] = process.env[key];
     }
-    if (options.console) {
-        args.push("--console");
-    }
-    if (options.email) {
-        args.push("--email", options.email);
-    }
-
-    const childEnv = {
-        ...process.env,
-        CLAUDE_CONFIG_DIR: isolatedConfigDir,
-        HOME: authDir,
-    };
-
-    const proc = spawnSync("claude", args, {
-        stdio: ["inherit", "pipe", "inherit"],
-        env: childEnv,
-    });
-
-    if (proc.error) {
-        throw new Error(`Failed to spawn claude login: ${proc.error.message}`);
-    }
-    if (proc.status !== 0) {
-        throw new Error(`claude login exited with status ${proc.status}`);
-    }
-
-    // Look for generated credentials in isolatedConfigDir/.credentials.json
-    const generatedCredentials = path.join(isolatedConfigDir, ".credentials.json");
-    if (!fs.existsSync(generatedCredentials)) {
-        throw new Error(
-            `Expected login credentials at ${generatedCredentials} not found after login`,
-        );
-    }
-
-    const raw = fs.readFileSync(generatedCredentials, "utf-8");
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(raw);
-    } catch (err: any) {
-        throw new Error(`Failed to parse credentials JSON: ${err.message}`);
-    }
-
-    normalizeAndSave(parsed);
-    return getStatus();
+    env.HOME = authDir;
+    env.CLAUDE_CONFIG_DIR = isolatedConfigDir;
+    const result = spawnSync("claude", args, { env, stdio: [0, 2, 2] });
+    if (result.error) throw new Error("Unable to start native Claude login");
+    if (result.status !== 0) throw new Error(`claude login exited with status ${result.status}`);
+    return runImport(path.join(isolatedConfigDir, ".credentials.json"));
 }

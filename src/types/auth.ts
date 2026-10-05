@@ -36,10 +36,13 @@ export interface OAuthEntry {
 
 export interface AuthStatus {
     configured: boolean;
-    type?: string;
-    expiresAt?: string;
-    isExpired?: boolean;
-    scopes?: string[];
-    subscriptionType?: string | null;
-    rateLimitTier?: string | null;
+    type: "oauth" | null;
+    provider: "claude";
+    expiresAt: string | null;
+    isExpired: boolean;
+    accessPresent: boolean;
+    refreshPresent: boolean;
+    accountIdPresent: false;
+    subscriptionType: string | null;
+    rateLimitTier: string | null;
 }

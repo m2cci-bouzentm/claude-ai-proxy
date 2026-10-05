@@ -4,9 +4,21 @@ OpenAI-compatible API proxy that routes through your Claude Code subscription (M
 
 ## Setup & Authentication
 
-Authentication is unified across `/data/auth.json` (configurable via `PROXY_AUTH_DIR`).
+Authentication is unified across `/data/auth.json` inside Docker. Compose sets
+`PROXY_AUTH_DIR=/data` and mounts `${PROXY_AUTH_VOLUME:-claude-proxy-data}` there.
+`PROXY_AUTH_VOLUME` controls the host volume source (named volume by default, or
+an absolute private host directory); it is independent of `PROXY_AUTH_DIR`.
+Do not set `PROXY_AUTH_VOLUME=/data` unless you explicitly want that host path.
+For local CLI use, set `PROXY_AUTH_DIR` to a private user-owned directory.
 
-Credentials are managed securely using the `proxy-auth` CLI, with zero token leaks in logs or status envelopes:
+Credentials are managed using the `proxy-auth` CLI. Status/import/login results
+are JSON-only on stdout; native login prompts and diagnostics go to stderr, with
+stdin attached for interactive codes. Browser login is the native default;
+`--sso`, `--console`, and `--email` are forwarded. The child receives a minimal
+terminal/browser environment, not inherited API keys, provider settings, proxy
+secrets, or Node injection options. Imports accept at most 64 KiB, reject symlinks
+and non-regular files, and report malformed JSON without credential excerpts.
+Copy `.env.example` to `.env` before running Compose:
 
 ```bash
 # Check status (configured, type, expiresAt, isExpired, subscriptionType)
@@ -217,7 +229,9 @@ behavior; it does not use the Hermes request schema.
 | `API_KEY` | required | Secures proxy endpoint |
 | `DEFAULT_MODEL` | `claude-sonnet-4-6` | Fallback model |
 | `PORT` | `4181` | Internal container port |
-| `CLAUDE_PROXY_HOME` | `/data` | Auth storage directory |
+| `PROXY_AUTH_DIR` | `/data` in Docker | Container/local auth storage directory |
+| `PROXY_AUTH_VOLUME` | `claude-proxy-data` | Compose host volume source mounted at `/data` |
+| `CLAUDE_PROXY_HOME` | `/data` | Legacy auth storage fallback |
 | `ACCOUNT_UUID` | required | Claude account UUID |
 | `DEVICE_ID` | required | Device ID hex string |
 | `SYSTEM_PROMPT_PATH` | `/data/system_prompt.json` | CLI system prompt file |
