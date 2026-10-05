@@ -23,6 +23,14 @@ test('unified thinking policy never enables adaptive thinking for forced tool ca
  const body=toolRequestSchema.parse({model:'claude-sonnet-4-6',messages:[{role:'user',content:'hi'}],tools:[{type:'function',function:{name:'echo',parameters:{type:'object'}}}],tool_choice:'required'});
  assert.equal(service.prepareToolRequest(body,'fallback').request.thinking,undefined);
 });
+test('adaptive thinking omits incompatible sampling parameters',()=>{
+ const body=toolRequestSchema.parse({model:'claude-sonnet-4-6',messages:[{role:'user',content:'hi'}],temperature:0.2,top_p:0.9});
+ const request=service.prepareToolRequest(body,'fallback').request;
+ assert.deepEqual(request.thinking,{type:'adaptive'});
+ assert.equal(request.temperature,undefined);
+ assert.equal(request.top_p,undefined);
+});
+
 test('unified endpoint preserves max_tokens precedence when both output limits are supplied',()=>{
  const body=toolRequestSchema.parse({model:'claude-sonnet-4-6',messages:[{role:'user',content:'hi'}],max_tokens:128,max_completion_tokens:256});
  assert.equal(service.prepareToolRequest(body,'fallback').request.max_tokens,128);
