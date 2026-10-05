@@ -12,6 +12,13 @@ Commands:
   import                             Interactively paste token fields one by one
   import --file <path> | -           Import native/normalized credential JSON
   status                             Print credential metadata (never secrets)
+
+Interactive token fields:
+  Access token example: <Claude-access-token>; leave blank for refresh-only
+  Refresh token example: <Claude-refresh-token>; leave blank for access-only
+  Expiry example (ISO 8601): 2026-10-05T15:24:26Z; epoch seconds/ms also accepted
+Browser login opens or prints an authorization URL. Complete it in a browser;
+if Claude displays a code, paste that code back when the native CLI asks.
 `);
   process.exit(exitCode);
 }
@@ -51,10 +58,10 @@ function askLine(prompt, hidden = false) {
 
 async function tokenWizard() {
   process.stderr.write('\nPaste Claude credentials. Values are saved to /data/auth.json.\nTokens stay hidden; leave either token blank if unavailable.\n');
-  const access = await askLine('Access token (hidden, optional): ', true);
-  const refresh = await askLine('Refresh token (hidden, optional): ', true);
+  const access = await askLine('Access token (hidden; example: <Claude-access-token>; blank for refresh-only): ', true);
+  const refresh = await askLine('Refresh token (hidden; example: <Claude-refresh-token>; blank for access-only): ', true);
   if (!access.trim() && !refresh.trim()) throw new Error('At least one access or refresh token is required');
-  const expires = await askLine('Expiry ISO time / epoch seconds / epoch ms (blank with refresh token = refresh now): ');
+  const expires = await askLine('Expiry (example: 2026-10-05T15:24:26Z or epoch; blank with refresh = refresh now): ');
   return runTokenWizardImport({ access, refresh, expires });
 }
 

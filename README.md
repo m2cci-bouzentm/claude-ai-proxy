@@ -30,6 +30,12 @@ Access-only and refresh-only transfers work; at least one token is required.
 JSON file/stdin forms remain available only for automation. Run
 `proxy-auth status` to inspect redacted credential metadata.
 
+Example inputs shown by the wizard: access `<Claude-access-token>`, refresh
+`<Claude-refresh-token>`, and expiry `2026-10-05T15:24:26Z` (epoch seconds/ms
+also accepted). Leave access blank for refresh-only; leave refresh blank for
+access-only. Browser/SSO/Console choices explain that users complete the shown
+authorization URL and paste a returned code only when native Claude CLI asks.
+
 The running server automatically reloads credentials when `/data/auth.json` is updated, without needing a restart. Seeding from local Claude credentials is completely non-destructive (never deletes source files).
 
 ## API

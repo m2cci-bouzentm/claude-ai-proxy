@@ -88,6 +88,7 @@ export function runLogin(options: RunLoginOptions = {}): AuthStatus {
     }
     env.HOME = authDir;
     env.CLAUDE_CONFIG_DIR = isolatedConfigDir;
+    process.stderr.write("Claude login: complete the authorization URL in a browser; paste the displayed code if the native CLI asks.\n");
     const result = spawnSync("claude", args, { env, stdio: [0, 2, 2] });
     if (result.error) throw new Error("Unable to start native Claude login");
     if (result.status !== 0) throw new Error(`claude login exited with status ${result.status}`);

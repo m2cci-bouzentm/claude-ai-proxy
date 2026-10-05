@@ -5,6 +5,17 @@ const path = require('node:path');
 const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 
+test('proxy-auth help explains every interactive input with safe examples', () => {
+  const cliPath = path.resolve(__dirname, '../bin/proxy-auth');
+  const result = spawnSync(process.execPath, [cliPath, '--help'], { encoding: 'utf8' });
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /browser login/i);
+  assert.match(result.stderr, /access token.*example/i);
+  assert.match(result.stderr, /refresh token.*example/i);
+  assert.match(result.stderr, /expiry.*ISO/i);
+  assert.match(result.stderr, /leave blank/i);
+});
+
 test('proxy-auth CLI: status subcommand output envelope and security', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-cli-test-'));
   try {
