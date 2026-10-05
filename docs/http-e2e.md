@@ -12,6 +12,18 @@ node scripts/e2e-docker-regression.cjs
 
 Docker startup currently fails on this host with containerd shim API mismatch: `shim was started through the deprecated API but was built against the new API`. This is host runtime failure, not passing Docker verification. Do not restart shared Docker/containerd services without approval. Local HTTP integration remains independently runnable through `npm test`.
 
+## Actual live attempt, 2026-10-05
+
+Production image `hermes-claude-e2e-20261005` built successfully. Live container `hermes-claude-e2e-20261005` could not start: same containerd shim API mismatch above. All 11 live endpoint checks, provider cache counters, Claude Code text and Bash tool-result proof remain **blocked**, not passed. No external inference occurred. Secured copies of both original credential files were mounted read-only outside build context; originals untouched. Installed Claude Code 2.1.287 bounded isolated CLI attempt against unavailable loopback target timed out after 20 seconds; this is not container CLI verification. Installed Codex 0.157.1 rejected `wire_api = "chat"` before network, exit 1. No Responses endpoint added.
+
+Reusable opt-in live container command:
+
+```sh
+E2E_ALLOW_REAL_INFERENCE=1 node scripts/e2e-docker-live.cjs
+```
+
+Launcher builds image, copies credentials into mode-0700 temporary directory outside repo, mounts copies read-only, publishes ephemeral loopback port, waits for health, runs shared HTTP cases, retains container/copies for inspection. It never prints auth contents. If token refresh needs writes, explicitly supply a writable copy instead; never mount originals writable. Remove retained test containers and copies manually after verification. Provider failures are failures, never cache proof.
+
 ## Shared cases / live runner
 
 - Shared implementation: `tests/e2e-cases.cjs`, exports `runCases({baseURL, apiKey, model, session, report})`, `assertUsage`, `parseSSE`.
