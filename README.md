@@ -230,7 +230,7 @@ API cache pricing is not a guarantee of equivalent subscription allowance saving
 
 ## OpenCode verification
 
-OpenCode 1.14.39 sends Draft 2020-12 tool schemas on every request. A live run exposed draft-07-only validation; regression now covers OpenCode-style `$schema`/`$defs`, and validation uses Ajv 2020. A real request containing all ten OpenCode tool schemas now passes local validation and reaches Anthropic. Provider then returns 429 because account weekly quota is exhausted; live text, Bash and cache evidence will be rerun after provider reset.
+OpenCode 1.14.39 sends Draft 2020-12 tool schemas on every request. A live run exposed draft-07-only validation; regression now covers OpenCode-style `$schema`/`$defs`, and validation uses Ajv 2020. OpenAI system/developer messages are appended after the immutable server billing prompt, preserving caller authority without allowing replacement. Live Docker verification passed text, completed Bash tool execution, and four cache probes with `14941, 17244, 17244, 17244` cache-read tokens. Claude Code through `/anthropic` also completed a real Bash `tool_use`/`tool_result` roundtrip.
 
 ## Security note
 

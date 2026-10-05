@@ -70,3 +70,15 @@ upstream confirmed `/cache_touch` unsupported (404), so route was removed and a
 429 because account weekly utilization was 100%; reset reported by provider:
 2026-10-05T15:00:00Z. Therefore real prompt-cache counters, images, tools and
 Claude Code tool execution remain blocked by provider quota, not marked passed.
+
+An independently authenticated Mac Claude Code account was then copied into
+isolated credentials (source retained). Against rebuilt container, OpenCode
+1.14.39 passed text, actual Bash tool execution, and four repeated cache probes
+with cache reads `14941, 17244, 17244, 17244`. Isolated Claude Code passed real
+Bash `tool_use` and `tool_result`, exit 0. OpenCode compatibility required two
+regressions: Draft 2020-12 schema validation and preservation of OpenAI
+system/developer authority after immutable server billing prompt.
+
+`CLAUDE_CREDENTIALS_SOURCE=/absolute/private/copy` selects an alternate copied
+credential file for opt-in live runner; value and credential contents are never
+logged or copied into image layers.

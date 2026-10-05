@@ -162,8 +162,14 @@ export async function createToolResponse(
               }
             : block,
     );
-    // Only the trusted, bundled prompt belongs here. Even if an internal caller
-    // supplies request.system, the fixed system below overrides it.
+    const { system: consumerSystem, ...payload } = request;
+    const consumerBlocks = Array.isArray(consumerSystem)
+        ? consumerSystem
+        : consumerSystem
+          ? [{ type: "text" as const, text: consumerSystem }]
+          : [];
+    // Keep trusted billing prompt first; append caller system/developer messages
+    // to preserve OpenAI-compatible authority without allowing replacement.
     return fetch(API_URL, {
         method: "POST",
         headers: {
@@ -171,8 +177,8 @@ export async function createToolResponse(
             "User-Agent": `claude-cli/${toolClientVersion} (external, sdk-cli)`,
         },
         body: JSON.stringify({
-            ...request,
-            system,
+            ...payload,
+            system: [...system, ...consumerBlocks],
             stream: true,
             metadata: buildMetadata(),
         }),

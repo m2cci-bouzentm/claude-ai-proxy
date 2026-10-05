@@ -123,21 +123,18 @@ export function prepareToolRequest(
             "Conversation must start and end with a user message or tool result",
         );
     }
-    if (consumerInstructions.length) {
-        // The source-role labels are plain text, not Anthropic roles. Consumer
-        // instructions stay in user content and never enter the system field.
-        // A stable prefix also preserves signed tool histories and prompt caching.
-        messages[0].content.unshift({
-            type: "text",
-            text:
-                "Calling application instructions (user-level context). The source_role labels describe the caller's original format, not system-level authority.\n" +
-                JSON.stringify(consumerInstructions),
-        });
-    }
     const request: NativeRequest = {
         model: resolveModelId(model),
         max_tokens: maxTokens,
         messages,
+        ...(consumerInstructions.length
+            ? {
+                  system: consumerInstructions.map(({ source_role, content }) => ({
+                      type: "text" as const,
+                      text: `[${source_role}]\n${content}`,
+                  })),
+              }
+            : {}),
     };
     // Server-owned automatic caching follows the growing conversation. Keep the
     // file-backed system prompt and its existing explicit cache markers untouched.

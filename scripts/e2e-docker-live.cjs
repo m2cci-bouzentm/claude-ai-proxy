@@ -14,14 +14,15 @@ const name = `hermes-claude-e2e-${Date.now()}`;
 const image = name;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-claude-e2e-'));
 fs.chmodSync(dir, 0o700);
-const credentials = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude/.credentials.json'), 'utf8'));
+const credentialsSource = path.resolve(process.env.CLAUDE_CREDENTIALS_SOURCE || path.join(os.homedir(), '.claude/.credentials.json'));
+const credentials = JSON.parse(fs.readFileSync(credentialsSource, 'utf8'));
 const oauth = credentials.claudeAiOauth;
 if (!oauth?.accessToken || !oauth?.refreshToken || !oauth?.expiresAt) throw new Error('Usable Claude Code OAuth copy not found');
 fs.writeFileSync(path.join(dir, 'auth.json'), JSON.stringify({
   type: 'oauth', access: oauth.accessToken, refresh: oauth.refreshToken,
   expires: oauth.expiresAt, scopes: oauth.scopes || [],
 }));
-fs.copyFileSync(path.join(os.homedir(), '.claude/.credentials.json'), path.join(dir, '.credentials.json'));
+fs.copyFileSync(credentialsSource, path.join(dir, '.credentials.json'));
 for (const target of ['auth.json', '.credentials.json']) fs.chmodSync(path.join(dir, target), 0o600);
 const docker = args => execFileSync('docker', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const key = require('node:crypto').randomBytes(24).toString('hex');

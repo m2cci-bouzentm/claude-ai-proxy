@@ -30,17 +30,16 @@ function fixture({ calls = [{ id: 'toolu_one', name: 'echo', input: { text: 'caf
   return new Response(new ReadableStream({ start(c) { for (const b of bytes) c.enqueue(Uint8Array.of(b)); c.close(); } }));
 }
 
-test('tool round trip preserves schemas, IDs, consumer instructions at user level, and parallel results', async () => {
+test('tool round trip preserves schemas, IDs, consumer system instructions, and parallel results', async () => {
   const p = prepareToolRequest(request({ messages: [{ role: 'system', content: 'Be concise' }, { role: 'developer', content: 'Use the caller workspace' }, { role: 'user', content: 'Echo café' }], tool_choice: 'required' }), 'fallback');
   assert.deepEqual(p.request.tools[0].input_schema, tool.function.parameters);
   assert.deepEqual(p.request.tool_choice, { type: 'any' });
-  assert.equal(p.request.system, undefined);
-  assert.equal(p.request.messages[0].role, 'user');
-  const prefix = p.request.messages[0].content[0].text;
-  assert.deepEqual(JSON.parse(prefix.slice(prefix.indexOf('\n') + 1)), [
-    { source_role: 'system', content: 'Be concise' }, { source_role: 'developer', content: 'Use the caller workspace' },
+  assert.deepEqual(p.request.system, [
+    { type: 'text', text: '[system]\nBe concise' },
+    { type: 'text', text: '[developer]\nUse the caller workspace' },
   ]);
-  assert.equal(p.request.messages[0].content[1].text, 'Echo café');
+  assert.equal(p.request.messages[0].role, 'user');
+  assert.equal(p.request.messages[0].content[0].text, 'Echo café');
   const result = await collectToolResponse(fixture(), p);
   assert.equal(result.choices[0].finish_reason, 'tool_calls');
   assert.equal(result.usage.prompt_tokens, 7);
@@ -130,11 +129,12 @@ test('server cache policy leaves message roles/content intact and ignores client
     const original = structuredClone(input);
     const enabled = prepareToolRequest(input, '').request;
     assert.deepEqual(enabled.cache_control, { type: 'ephemeral', ttl: '5m' });
-    assert.equal(enabled.system, undefined);
+    assert.deepEqual(enabled.system, [
+      { type: 'text', text: '[system]\nSYSTEM_USER_CONTEXT' },
+      { type: 'text', text: '[developer]\nDEVELOPER_USER_CONTEXT' },
+    ]);
     assert.equal(enabled.messages[0].role, 'user');
-    assert.match(enabled.messages[0].content[0].text, /SYSTEM_USER_CONTEXT/);
-    assert.match(enabled.messages[0].content[0].text, /DEVELOPER_USER_CONTEXT/);
-    assert.deepEqual(enabled.messages[0].content[1], { type: 'text', text: 'hello' });
+    assert.deepEqual(enabled.messages[0].content[0], { type: 'text', text: 'hello' });
     assert.deepEqual(input, original);
     process.env.TOOL_PROMPT_CACHE_TTL = 'off';
     const disabled = prepareToolRequest(input, '').request;
@@ -161,19 +161,19 @@ test('JSON usage separates cache reads/writes without double-counting total inpu
   }
 });
 
-test('images preserve ordering, user-level instructions and tool-result history', () => {
+test('images preserve ordering, system instructions and tool-result history', () => {
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=';
   const img = { type: 'image_url', image_url: { url: 'data:image/png;base64,' + png, detail: 'high' } };
   const parts = [{ type: 'text', text: 'before' }, img, { type: 'text', text: 'after' },
     { type: 'image_url', image_url: { url: 'https://example.com/picture.png' } }];
   const p = prepareToolRequest(request({ messages: [{ role: 'system', content: 'consumer' }, { role: 'user', content: parts }] }), 'fallback').request;
-  assert.equal(p.system, undefined);
+  assert.deepEqual(p.system, [{ type: 'text', text: '[system]\nconsumer' }]);
   assert.equal(p.messages[0].role, 'user');
-  assert.deepEqual(p.messages[0].content.slice(1), [parts[0], { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }, parts[2], { type: 'image', source: { type: 'url', url: 'https://example.com/picture.png' } }]);
+  assert.deepEqual(p.messages[0].content, [parts[0], { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }, parts[2], { type: 'image', source: { type: 'url', url: 'https://example.com/picture.png' } }]);
   const follow = prepareToolRequest(request({ messages: [{ role: 'user', content: 'look' },
     { role: 'assistant', content: null, tool_calls: [{ id: 'image_call', type: 'function', function: { name: 'echo', arguments: '{}' } }] },
     { role: 'tool', tool_call_id: 'image_call', content: [img] }] }), 'fallback').request;
-  assert.deepEqual(follow.messages[2].content[0], { type: 'tool_result', tool_use_id: 'image_call', content: [p.messages[0].content[2]] });
+  assert.deepEqual(follow.messages[2].content[0], { type: 'tool_result', tool_use_id: 'image_call', content: [p.messages[0].content[1]] });
   for (const url of ['file:///etc/passwd', 'https://user:pass@example.com/a', 'data:image/svg+xml;base64,AAAA', 'data:image/png;base64,%%%', 'data:image/png;base64,AB==', 'data:image/png;base64,' + Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64')]) {
     assert.throws(() => prepareToolRequest(request({ messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url } }] }] }), 'fallback'));
   }
@@ -220,7 +220,7 @@ test('schema normalization preserves text, options and local parameter reference
       ...request().messages], stop: 'END', temperature: 0, top_p: 1, max_completion_tokens: 100,
   }), 'fallback');
   assert.deepEqual(p.request.tools[0].input_schema, parameters);
-  assert.match(p.request.messages[0].content[0].text, /first\\nsecond/);
+  assert.equal(p.request.system[0].text, '[system]\nfirst\nsecond');
   assert.deepEqual(p.request.stop_sequences, ['END']);
   assert.equal(p.request.max_tokens, 100);
   assert.equal(p.request.temperature, 0);
