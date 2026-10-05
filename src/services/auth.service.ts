@@ -35,7 +35,7 @@ function initialize(): void {
 }
 function result(): AuthResult {
     if (!currentAuth?.access) throw new Error("No valid Claude credentials configured. Run proxy-auth login or import.");
-    return { accessToken: currentAuth.access, subscriptionType: currentAuth.subscriptionType, rateLimitTier: currentAuth.rateLimitTier };
+    return { accessToken: currentAuth.access, subscriptionType: currentAuth.subscriptionType ?? null, rateLimitTier: currentAuth.rateLimitTier ?? null };
 }
 export async function getAuth(bufferMs = 5 * 60 * 1000): Promise<AuthResult> {
     initialize();

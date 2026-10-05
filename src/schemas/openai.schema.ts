@@ -104,6 +104,7 @@ export const openAIRequestSchema = z.object({
     model: z.string().min(1).nullish(),
     max_completion_tokens: tokenLimit.nullish(),
     max_tokens: tokenLimit.nullish(),
+    max_output_tokens: tokenLimit.nullish(),
     stream: z.boolean().optional(),
     parallel_tool_calls: z.boolean().optional(),
     n: z.literal(1).optional(),
@@ -138,7 +139,7 @@ export const openAIRequestSchema = z.object({
         .nullish()
         .transform((tools) => tools ?? []),
     tool_choice: toolChoice.nullish(),
-    temperature: z.number().min(0).max(1).optional(),
+    temperature: z.number().min(0).max(2).optional(),
     top_p: z.number().min(0).max(1).optional(),
     stop: z
         .union([

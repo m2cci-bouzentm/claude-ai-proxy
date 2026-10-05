@@ -196,20 +196,18 @@ tool/cache probes passed. See [Anthropic's refusal documentation](https://platfo
 
 Run `npm test` for route, compatibility, schema, streaming and cancellation tests.
 
-## Architecture
-
 ## Architecture & Shared Contract
 
-The Express application separates routing, validation, and business logic into canonical layers matching the shared proxy architecture:
+Canonical layers match Codex proxy so provider adapters can eventually live in one repository:
 
 ```text
 src/
   config/       Environment settings, Zod env parsing, and model catalog
   routes/       Canonical endpoint registration (openai.ts, anthropic.ts, health.ts, models.ts)
   middleware/   API key authentication and Zod boundary validation (auth.ts, validate.ts)
-  controllers/  HTTP request/response lifecycle, streaming, and cancellation (openai.controller.ts)
+  controllers/  HTTP request/response lifecycle, streaming, and cancellation (openai.controller.ts, anthropic.controller.ts)
   services/     OpenAI conversation handling, native Anthropic gateway, and OAuth lifecycle
-  schemas/      Zod 4.3.6 boundary contracts (openai.schema, anthropic.schema, auth.schema, provider.schema, config.schema)
+  schemas/      Byte-identical shared Zod contract (contracts.schema.ts) plus provider boundary schemas
   types/        Shared contracts and schema-inferred TypeScript types
   lib/          Claude transport, image conversion, and secure credential storage
   jobs/         Proactive OAuth token refresh cron jobs
@@ -218,7 +216,7 @@ src/
   index.ts      Server bootstrap and router composition
 ```
 
-All inbound requests across `/openai/v1` and `/anthropic`, environment variables at startup, auth storage files, and token wizard inputs are validated at the boundaries using Zod (v4.3.6). Tool argument schemas provided by callers continue to use Draft 2020-12 validation via Ajv 2020. Unmounted legacy routes and controllers have been removed; obsolete `/v1` and `/tools/v1` remain removed.
+All inbound OpenAI/Anthropic payloads, environment variables, auth storage files, token wizard values, and known upstream provider responses/events are validated with Zod 4.3.6. `contracts.schema.ts` is byte-identical in both repositories; architecture tests pin its SHA-256 and required module manifest. Ajv 2020 remains only for caller-provided JSON Schema tool parameters. Obsolete `/v1` and `/tools/v1` routes remain removed.
 
 ## Environment variables
 

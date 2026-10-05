@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { authenticateAnthropic } from "../middleware/auth";
 import { config } from "../config";
-import { proxyAnthropicMessages } from "../services/anthropic.service";
+import { anthropicGateway } from "../controllers/anthropic.controller";
 
 export function createAnthropicRouter() {
     const router = Router();
@@ -12,7 +12,7 @@ export function createAnthropicRouter() {
         }
         authenticateAnthropic(req, res, next);
     };
-    const forward = (req: Parameters<typeof authenticateAnthropic>[0], res: Parameters<typeof authenticateAnthropic>[1]) => { void proxyAnthropicMessages(req, res); };
+    const forward = anthropicGateway;
     router.post(["/v1/messages", "/v1/messages/count_tokens"], authenticate, forward);
     router.head("/api/hello", authenticate, forward);
     router.get(["/v1/models", "/v1/models/:model", "/api/oauth/usage", "/api/oauth/profile"], authenticate, forward);

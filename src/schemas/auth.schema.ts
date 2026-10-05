@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+    canonicalOAuthContractSchema,
+    authStatusContractSchema,
+    tokenWizardContractSchema,
+} from "./contracts.schema";
 
 export const tokenResponseSchema = z.object({
     access_token: z.string().min(1),
@@ -30,39 +35,13 @@ export const credentialsFileSchema = z.object({
 });
 export type CredentialsFile = z.infer<typeof credentialsFileSchema>;
 
-export const oAuthEntrySchema = z.object({
-    type: z.literal("oauth"),
-    access: z.string(),
-    refresh: z.string(),
-    expires: z.number().finite(),
-    scopes: z.array(z.string()).optional(),
-    subscriptionType: z.string().nullable(),
-    rateLimitTier: z.string().nullable(),
-}).refine(
-    (entry) => Boolean(entry.access.trim() || entry.refresh.trim()),
-    { message: "Invalid credential: missing access/refresh" },
-);
+export const oAuthEntrySchema = canonicalOAuthContractSchema;
 export type OAuthEntry = z.infer<typeof oAuthEntrySchema>;
 
-export const authStatusSchema = z.object({
-    configured: z.boolean(),
-    type: z.literal("oauth").nullable(),
-    provider: z.literal("claude"),
-    expiresAt: z.string().nullable(),
-    isExpired: z.boolean(),
-    accessPresent: z.boolean(),
-    refreshPresent: z.boolean(),
-    accountIdPresent: z.literal(false),
-    subscriptionType: z.string().nullable(),
-    rateLimitTier: z.string().nullable(),
-});
+export const authStatusSchema = authStatusContractSchema;
 export type AuthStatus = z.infer<typeof authStatusSchema>;
 
-export const tokenWizardValuesSchema = z.object({
-    access: z.string(),
-    refresh: z.string(),
-    expires: z.string().optional(),
-});
+export const tokenWizardValuesSchema = tokenWizardContractSchema;
 export type TokenWizardValues = z.infer<typeof tokenWizardValuesSchema>;
 
 /**

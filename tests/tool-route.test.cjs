@@ -193,7 +193,7 @@ test('request boundary rejects invalid shapes without coercion or forwarding', a
     for (const extra of [
       { messages: [] }, { messages: [{ role: 'invalid', content: 'hi' }] },
       { messages: [{ role: 'user', content: 42 }] }, { stream: 'true' },
-      { max_tokens: '100' }, { temperature: 2 }, { stream_options: { include_usage: 1 } },
+      { max_tokens: '100' }, { temperature: 2.1 }, { stream_options: { include_usage: 1 } },
       { tools: [{ type: 'function', function: { name: 42 } }] },
       { response_format: { type: 'json_object' } },
       { messages: [...request().messages, { role: 'assistant', content: null,

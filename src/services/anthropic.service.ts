@@ -5,13 +5,44 @@ import { getAuth } from "./auth.service";
 import { config } from "../config";
 import { resolveModelId } from "../config/models";
 import { createRequestCancellation } from "../utils/abort";
-import { anthropicMessagesRequestSchema, anthropicCountTokensRequestSchema } from "../schemas/anthropic.schema";
+import { anthropicMessagesRequestSchema, anthropicCountTokensRequestSchema, anthropicModelsQuerySchema } from "../schemas/anthropic.schema";
+import {
+    upstreamCountTokensResponseSchema,
+    upstreamEventSchema,
+    upstreamMessageSchema,
+    upstreamModelSchema,
+    upstreamModelsResponseSchema,
+} from "../schemas/provider.schema";
 
 const UPSTREAM_ANTHROPIC_URL =
     process.env.ANTHROPIC_UPSTREAM_URL ||
     "https://api.anthropic.com/v1/messages?beta=true";
 
 import { ANTHROPIC_BETAS as DEFAULT_BETAS } from "../lib/anthropic-betas";
+
+function validateSuccessfulJson(pathname: string, raw: Buffer): void {
+    let payload: unknown;
+    try { payload = JSON.parse(raw.toString("utf8")); }
+    catch { throw new Error("Invalid upstream JSON"); }
+    const schema = pathname === "/v1/messages" ? upstreamMessageSchema
+        : pathname === "/v1/messages/count_tokens" ? upstreamCountTokensResponseSchema
+        : pathname === "/v1/models" ? upstreamModelsResponseSchema
+        : pathname.startsWith("/v1/models/") ? upstreamModelSchema
+        : null;
+    if (schema && !schema.safeParse(payload).success) throw new Error("Invalid upstream response");
+}
+
+function validateSseFrame(frame: string): void {
+    const data = frame.split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n");
+    if (!data || data === "[DONE]") return;
+    let payload: unknown;
+    try { payload = JSON.parse(data); }
+    catch { throw new Error("Invalid upstream stream JSON"); }
+    if (!upstreamEventSchema.safeParse(payload).success) throw new Error("Invalid upstream stream event");
+}
 
 export async function proxyAnthropicMessages(
     req: Request,
@@ -27,9 +58,13 @@ export async function proxyAnthropicMessages(
         timeout.unref();
     };
     try {
-        const incomingBody = req.body ?? {};
+        let incomingBody: Record<string, unknown> = req.body ?? {};
         const isMessages = req.path === "/v1/messages";
         const isCountTokens = req.path === "/v1/messages/count_tokens";
+        if (req.path === "/v1/models" && !anthropicModelsQuerySchema.safeParse(req.query).success) {
+            res.status(400).json({ type: "error", error: { type: "invalid_request_error", message: "Invalid model query" } });
+            return;
+        }
 
         if (isMessages || isCountTokens) {
             const schema = isMessages ? anthropicMessagesRequestSchema : anthropicCountTokensRequestSchema;
@@ -44,13 +79,14 @@ export async function proxyAnthropicMessages(
                 });
                 return;
             }
+            incomingBody = parsed.data;
         }
 
         resetTimeout();
         const auth = await getAuth();
-        const resolvedModel = incomingBody.model
+        const resolvedModel = typeof incomingBody.model === "string"
             ? resolveModelId(incomingBody.model)
-            : incomingBody.model;
+            : undefined;
 
         const forwardBody: Record<string, unknown> = {
             ...incomingBody,
@@ -147,7 +183,11 @@ export async function proxyAnthropicMessages(
                     chunks.push(Buffer.from(chunk));
                 }
             }
-            res.send(Buffer.concat(chunks));
+            const raw = Buffer.concat(chunks);
+            if (upstreamResp.ok && contentType.includes("application/json")) {
+                validateSuccessfulJson(req.path, raw);
+            }
+            res.send(raw);
             return;
         }
 
@@ -164,16 +204,29 @@ export async function proxyAnthropicMessages(
         }
 
         const reader = upstreamResp.body.getReader();
+        const decoder = new TextDecoder();
+        let pending = "";
         try {
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
                 resetTimeout();
                 if (res.destroyed) break;
-                if (!res.write(Buffer.from(value))) {
-                    await once(res, "drain", { signal: cancellation.signal });
+                pending += decoder.decode(value, { stream: true });
+                for (;;) {
+                    const boundary = /\r?\n\r?\n/.exec(pending);
+                    if (!boundary) break;
+                    const frame = pending.slice(0, boundary.index);
+                    const separator = boundary[0];
+                    pending = pending.slice(boundary.index + separator.length);
+                    validateSseFrame(frame);
+                    if (!res.write(frame + separator)) {
+                        await once(res, "drain", { signal: cancellation.signal });
+                    }
                 }
             }
+            pending += decoder.decode();
+            if (pending.trim()) throw new Error("Truncated upstream stream");
             if (!res.destroyed) res.end();
         } finally {
             reader.releaseLock();

@@ -9,7 +9,7 @@ import type {
 import Ajv2020, { type ValidateFunction } from "ajv/dist/2020";
 import { config, getToolCacheTtl } from "../config";
 import { ToolError } from "../errors/tool-error";
-import { upstreamEventSchema, upstreamUsageSchema } from "../schemas/provider.schema";
+import { upstreamEventSchema, upstreamMessageSchema, upstreamUsageSchema } from "../schemas/provider.schema";
 import type {
     ToolRequest,
     PreparedToolRequest,
@@ -26,7 +26,7 @@ export function prepareToolRequest(
     defaultModel: string,
 ): PreparedToolRequest {
     const model = input.model ?? defaultModel;
-    const maxTokens = input.max_tokens ?? input.max_completion_tokens ?? 8192;
+    const maxTokens = input.max_tokens ?? input.max_completion_tokens ?? input.max_output_tokens ?? 8192;
     const registry = new Map<string, ValidateFunction>();
     const tools = input.tools.map(({ function: fn }) => {
         if (registry.has(fn.name))
@@ -213,7 +213,9 @@ export async function collectToolResponse(
     const openBlocks = new Set<number>(),
         rawArguments = new Map<number, string>();
     stream.on("streamEvent", (e) => {
-        upstreamEventSchema.safeParse(e);
+        if (!upstreamEventSchema.safeParse(e).success) {
+            throw new ToolError("Invalid upstream stream event", 502);
+        }
         if (e.type === "content_block_delta" && e.delta.type === "text_delta") onText?.(e.delta.text);
         if (e.type === "message_stop") stopped = true;
         if (e.type === "content_block_start") openBlocks.add(e.index);
@@ -229,6 +231,9 @@ export async function collectToolResponse(
         }
     });
     const message = await stream.finalMessage();
+    if (!upstreamMessageSchema.safeParse(message).success) {
+        throw new ToolError("Invalid upstream message", 502);
+    }
     if (!stopped || openBlocks.size)
         throw new ToolError("Incomplete upstream stream", 502);
     const finish = message.stop_reason;

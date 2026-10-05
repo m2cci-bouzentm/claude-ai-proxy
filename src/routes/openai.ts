@@ -4,6 +4,7 @@ import { createToolResponse } from "../lib/claude-client";
 import { createOpenAIController } from "../controllers/openai.controller";
 import { validateBody } from "../middleware/validate";
 import { openAIRequestSchema } from "../schemas/openai.schema";
+import { openAIChatRequestContractSchema } from "../schemas/contracts.schema";
 import { modelsRouter } from "./models";
 import type { ToolTransport } from "../types/tool";
 
@@ -15,6 +16,7 @@ export function createOpenAIRouter(
     router.use(modelsRouter);
     router.post(
         "/chat/completions",
+        validateBody(openAIChatRequestContractSchema),
         validateBody(openAIRequestSchema),
         createOpenAIController(transport, defaultModel),
     );

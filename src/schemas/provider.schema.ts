@@ -1,10 +1,10 @@
 import { z } from "zod";
 
 export const upstreamUsageSchema = z.object({
-    input_tokens: z.number().int().nonnegative().optional(),
-    output_tokens: z.number().int().nonnegative().optional(),
-    cache_creation_input_tokens: z.number().int().nonnegative().optional(),
-    cache_read_input_tokens: z.number().int().nonnegative().optional(),
+    input_tokens: z.number().int().nonnegative().nullish(),
+    output_tokens: z.number().int().nonnegative().nullish(),
+    cache_creation_input_tokens: z.number().int().nonnegative().nullish(),
+    cache_read_input_tokens: z.number().int().nonnegative().nullish(),
 }).passthrough();
 export type UpstreamUsage = z.infer<typeof upstreamUsageSchema>;
 
@@ -30,13 +30,15 @@ export const upstreamEventSchema = z.object({
 }).passthrough();
 export type UpstreamEvent = z.infer<typeof upstreamEventSchema>;
 
+export const upstreamModelSchema = z.object({
+    id: z.string(),
+    type: z.string().optional(),
+    display_name: z.string().optional(),
+    created_at: z.string().optional(),
+}).passthrough();
+
 export const upstreamModelsResponseSchema = z.object({
-    data: z.array(z.object({
-        id: z.string(),
-        type: z.string().optional(),
-        display_name: z.string().optional(),
-        created_at: z.string().optional(),
-    }).passthrough()),
+    data: z.array(upstreamModelSchema),
     has_more: z.boolean().optional(),
     first_id: z.string().nullable().optional(),
     last_id: z.string().nullable().optional(),
