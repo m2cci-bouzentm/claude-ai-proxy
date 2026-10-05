@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import type { OAuthEntry, AuthStatus } from "../types/auth";
+import { validateAndNormalizeAuth, authStatusSchema } from "../schemas/auth.schema";
 
 export function getAuthDir(): string { return process.env.PROXY_AUTH_DIR || process.env.CLAUDE_PROXY_HOME || "/data"; }
 export function getAuthFile(): string { return path.join(getAuthDir(), "auth.json"); }
@@ -37,19 +38,7 @@ export function readSecureJson(file: string): { data: unknown; generation: strin
     } finally { fs.closeSync(fd); }
 }
 export function normalize(data: unknown): OAuthEntry {
-    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid credential schema");
-    const root = data as Record<string, any>;
-    const native = Object.hasOwn(root, "claudeAiOauth");
-    const obj = native ? root.claudeAiOauth : root;
-    if (!obj || typeof obj !== "object" || Array.isArray(obj) || (!native && obj.type !== "oauth")) throw new Error("Invalid credential schema");
-    const access = obj[native ? "accessToken" : "access"] ?? "";
-    const refresh = obj[native ? "refreshToken" : "refresh"] ?? "";
-    if (typeof access !== "string" || typeof refresh !== "string" || (!access.trim() && !refresh.trim())) throw new Error("Invalid credential: missing access/refresh");
-    const expiry = obj[native ? "expiresAt" : "expires"];
-    if ((expiry === undefined && access.trim()) || (expiry !== undefined && (typeof expiry !== "number" || !Number.isFinite(expiry) || !Number.isFinite(new Date(expiry).getTime())))) throw new Error("Invalid credential expiry");
-    if (obj.scopes !== undefined && (!Array.isArray(obj.scopes) || !obj.scopes.every((s: unknown) => typeof s === "string"))) throw new Error("Invalid credential scopes");
-    for (const key of ["subscriptionType", "rateLimitTier"]) if (obj[key] !== undefined && obj[key] !== null && typeof obj[key] !== "string") throw new Error("Invalid credential metadata");
-    return { type: "oauth", access, refresh, expires: expiry ?? 0, ...(obj.scopes === undefined ? {} : { scopes: [...obj.scopes] }), subscriptionType: obj.subscriptionType ?? null, rateLimitTier: obj.rateLimitTier ?? null };
+    return validateAndNormalizeAuth(data);
 }
 export function readSnapshot(): { entry: OAuthEntry; generation: string } | null {
     try { const result = readSecureJson(getAuthFile()); return { entry: normalize(result.data), generation: result.generation }; } catch { return null; }
@@ -76,5 +65,17 @@ export function write(input: OAuthEntry): void {
 export function normalizeAndSave(data: unknown): OAuthEntry { const entry = normalize(data); write(entry); return entry; }
 export function getStatus(): AuthStatus {
     const entry = read();
-    return { configured: !!entry, type: entry?.type ?? null, provider: "claude", expiresAt: entry ? new Date(entry.expires).toISOString() : null, isExpired: entry ? entry.expires <= Date.now() : false, accessPresent: !!entry?.access, refreshPresent: !!entry?.refresh, accountIdPresent: false, subscriptionType: entry?.subscriptionType ?? null, rateLimitTier: entry?.rateLimitTier ?? null };
+    const status: AuthStatus = {
+        configured: !!entry,
+        type: entry?.type ?? null,
+        provider: "claude",
+        expiresAt: entry ? new Date(entry.expires).toISOString() : null,
+        isExpired: entry ? entry.expires <= Date.now() : false,
+        accessPresent: !!entry?.access,
+        refreshPresent: !!entry?.refresh,
+        accountIdPresent: false,
+        subscriptionType: entry?.subscriptionType ?? null,
+        rateLimitTier: entry?.rateLimitTier ?? null,
+    };
+    return authStatusSchema.parse(status);
 }

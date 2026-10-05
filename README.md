@@ -198,28 +198,27 @@ Run `npm test` for route, compatibility, schema, streaming and cancellation test
 
 ## Architecture
 
-The Express application separates routing, validation, and business logic:
+## Architecture & Shared Contract
+
+The Express application separates routing, validation, and business logic into canonical layers matching the shared proxy architecture:
 
 ```text
 src/
-  config/       Environment settings and cache policy
-  routes/       Endpoint registration
-  middleware/   API authentication and Zod body validation
-  controllers/  HTTP responses, streaming, and request cancellation
-  services/     Tool conversation handling and OAuth lifecycle
-  schemas/      Runtime request/configuration schemas
+  config/       Environment settings, Zod env parsing, and model catalog
+  routes/       Canonical endpoint registration (openai.ts, anthropic.ts, health.ts, models.ts)
+  middleware/   API key authentication and Zod boundary validation (auth.ts, validate.ts)
+  controllers/  HTTP request/response lifecycle, streaming, and cancellation (openai.controller.ts)
+  services/     OpenAI conversation handling, native Anthropic gateway, and OAuth lifecycle
+  schemas/      Zod 4.3.6 boundary contracts (openai.schema, anthropic.schema, auth.schema, provider.schema, config.schema)
   types/        Shared contracts and schema-inferred TypeScript types
-  lib/          Claude transport, image conversion, and credential storage
-  errors/       Domain errors
-  utils/        Cancellation and HTTP error helpers
-  index.ts      Middleware, route registration, and server startup
+  lib/          Claude transport, image conversion, and secure credential storage
+  jobs/         Proactive OAuth token refresh cron jobs
+  errors/       Domain errors with protocol-safe error mapping
+  utils/        Request cancellation and error handling helpers
+  index.ts      Server bootstrap and router composition
 ```
 
-The Hermes route validates at the boundary before passing typed data to its
-controller and service. Shared types are imported from `types/`; schemas remain
-the source of truth for inferred request types. The legacy route retains its
-original conversion, authentication, byte limit, JSON errors, and streaming
-behavior; it does not use the Hermes request schema.
+All inbound requests across `/openai/v1` and `/anthropic`, environment variables at startup, auth storage files, and token wizard inputs are validated at the boundaries using Zod (v4.3.6). Tool argument schemas provided by callers continue to use Draft 2020-12 validation via Ajv 2020. Unmounted legacy routes and controllers have been removed; obsolete `/v1` and `/tools/v1` remain removed.
 
 ## Environment variables
 

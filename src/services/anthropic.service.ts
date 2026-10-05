@@ -5,6 +5,7 @@ import { getAuth } from "./auth.service";
 import { config } from "../config";
 import { resolveModelId } from "../config/models";
 import { createRequestCancellation } from "../utils/abort";
+import { anthropicMessagesRequestSchema, anthropicCountTokensRequestSchema } from "../schemas/anthropic.schema";
 
 const UPSTREAM_ANTHROPIC_URL =
     process.env.ANTHROPIC_UPSTREAM_URL ||
@@ -30,21 +31,19 @@ export async function proxyAnthropicMessages(
         const isMessages = req.path === "/v1/messages";
         const isCountTokens = req.path === "/v1/messages/count_tokens";
 
-        if (
-            (isMessages || isCountTokens) && (
-            !incomingBody ||
-            typeof incomingBody !== "object" ||
-            !incomingBody.messages ||
-            !Array.isArray(incomingBody.messages))
-        ) {
-            res.status(400).json({
-                type: "error",
-                error: {
-                    type: "invalid_request_error",
-                    message: "messages is required and must be an array",
-                },
-            });
-            return;
+        if (isMessages || isCountTokens) {
+            const schema = isMessages ? anthropicMessagesRequestSchema : anthropicCountTokensRequestSchema;
+            const parsed = schema.safeParse(incomingBody);
+            if (!parsed.success) {
+                res.status(400).json({
+                    type: "error",
+                    error: {
+                        type: "invalid_request_error",
+                        message: "messages is required and must be an array",
+                    },
+                });
+                return;
+            }
         }
 
         resetTimeout();

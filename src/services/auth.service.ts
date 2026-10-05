@@ -1,4 +1,5 @@
 import type { TokenResponse, AuthResult, OAuthEntry } from "../types/auth";
+import { tokenResponseSchema } from "../schemas/auth.schema";
 import * as storage from "../lib/auth-storage";
 import { readClaudeCredentials } from "../lib/keychain";
 import { config } from "../config";
@@ -54,8 +55,10 @@ export async function getAuth(bufferMs = 5 * 60 * 1000): Promise<AuthResult> {
                 body: JSON.stringify({ grant_type: "refresh_token", refresh_token: snapshot.refresh, client_id: CLIENT_ID, scope: "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload" }),
             });
             if (!response.ok) throw new Error(`Claude OAuth refresh failed (${response.status})`);
-            const tokens: TokenResponse = await response.json() as TokenResponse;
-            if (typeof tokens.access_token !== "string" || !tokens.access_token.trim() || typeof tokens.expires_in !== "number" || !Number.isFinite(tokens.expires_in) || tokens.expires_in <= 0 || (tokens.refresh_token !== undefined && (typeof tokens.refresh_token !== "string" || !tokens.refresh_token.trim())) || (tokens.scope !== undefined && typeof tokens.scope !== "string")) throw new Error("Invalid OAuth refresh response");
+            const rawTokens = await response.json();
+            const parsed = tokenResponseSchema.safeParse(rawTokens);
+            if (!parsed.success) throw new Error("Invalid OAuth refresh response");
+            const tokens = parsed.data;
             const next = storage.normalize({ ...snapshot, access: tokens.access_token, refresh: tokens.refresh_token ?? snapshot.refresh, expires: Date.now() + tokens.expires_in * 1000, scopes: tokens.scope === undefined ? snapshot.scopes : tokens.scope.split(/\s+/).filter(Boolean) });
             // Last synchronous operation before write: compare canonical file and local invalidation generation.
             const latest = storage.readSnapshot();

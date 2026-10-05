@@ -3,6 +3,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { ensureAuthDir, normalizeAndSave, getStatus } from "./lib/auth-storage";
 import type { AuthStatus } from "./types/auth";
+import { tokenWizardValuesSchema, type TokenWizardValues } from "./schemas/auth.schema";
+export type { TokenWizardValues };
 
 export interface RunLoginOptions {
     browser?: boolean;
@@ -51,7 +53,6 @@ export function runImport(source: string): AuthStatus {
     normalizeAndSave(parsed);
     return runStatus();
 }
-export interface TokenWizardValues { access: string; refresh: string; expires: string; }
 function parseExpiry(raw: string, access: string): number {
     const value = raw.trim();
     if (value) {
@@ -63,9 +64,11 @@ function parseExpiry(raw: string, access: string): number {
     if (!access) return 0;
     throw new Error("Expiry is required when importing an access token");
 }
+
 export function runTokenWizardImport(values: TokenWizardValues): AuthStatus {
-    const access = values.access.trim(), refresh = values.refresh.trim();
-    normalizeAndSave({ type: "oauth", access, refresh, expires: parseExpiry(values.expires, access),
+    const validated = tokenWizardValuesSchema.parse(values);
+    const access = validated.access.trim(), refresh = validated.refresh.trim();
+    normalizeAndSave({ type: "oauth", access, refresh, expires: parseExpiry(validated.expires ?? "", access),
         scopes: [], subscriptionType: null, rateLimitTier: null });
     return getStatus();
 }
