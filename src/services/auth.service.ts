@@ -36,11 +36,11 @@ function result(): AuthResult {
     if (!currentAuth?.access) throw new Error("No valid Claude credentials configured. Run proxy-auth login or import.");
     return { accessToken: currentAuth.access, subscriptionType: currentAuth.subscriptionType, rateLimitTier: currentAuth.rateLimitTier };
 }
-export async function getAuth(): Promise<AuthResult> {
+export async function getAuth(bufferMs = 5 * 60 * 1000): Promise<AuthResult> {
     initialize();
     reload();
     if (!currentAuth || !generation) throw new Error("No valid Claude credentials configured. Run proxy-auth login or import.");
-    if (currentAuth.access && currentAuth.expires >= Date.now() + 5 * 60 * 1000) return result();
+    if (currentAuth.access && currentAuth.expires >= Date.now() + bufferMs) return result();
     if (!currentAuth.refresh) {
         if (currentAuth.expires > Date.now()) return result();
         throw new Error("Claude access token expired; no refresh token available");

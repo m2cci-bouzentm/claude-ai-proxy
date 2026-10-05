@@ -28,7 +28,7 @@ async function runCases({ baseURL, apiKey, model = MODEL, session = 'http-e2e-st
   assert.equal((await request('/health')).status, 200);
   const models = await (await request('/openai/v1/models')).json();
   assert.equal(models.object, 'list');
-  assert.equal(models.data.length, 16, 'OpenAI catalog must advertise 16 models');
+  assert.equal(models.data.length, 20, 'OpenAI catalog must advertise 20 models');
   for (const m of models.data) {
     assert.equal(typeof m.id, 'string');
     assert.equal(typeof m.context_length, 'number');

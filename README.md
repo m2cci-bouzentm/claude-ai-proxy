@@ -128,8 +128,8 @@ updated conversation to the same endpoint. The proxy never executes tools.
 Both model-list endpoints publish bare model names with a `context_length` preset
 of `200000`, plus separate `-1m` aliases with a preset of `1000000` for these models:
 
-- `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`
-- `claude-sonnet-4-6`
+- `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`
+- `claude-sonnet-4-6`, `claude-sonnet-5`
 - `claude-fable-5`, `claude-fable-5-1`
 
 For example, choose `claude-fable-5-1-1m` for the 1M preset. Sonnet 4.5 and
@@ -160,8 +160,8 @@ Unified OpenAI inference endpoint accepts bodies up to 32 MiB.
 Model capabilities are validated by upstream; the proxy has no model-specific
 tool-choice restrictions. Signed thinking blocks, when returned, are preserved as
 `reasoning_details` in JSON and SSE and must be replayed unchanged by the client.
-The opt-in route uses the 2.1.251 client protocol identity;
-the existing route retains its previous identity and behavior. Model availability
+Both routes present the Claude Code 2.1.280 client identity (User-Agent and
+billing header), which upstream requires for the newest models. Model availability
 still depends on the authenticated account, and the model's token limit applies
 independently of the HTTP byte limit.
 

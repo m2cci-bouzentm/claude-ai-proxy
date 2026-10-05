@@ -7,6 +7,7 @@ import { healthRouter } from "./routes/health";
 import { modelsRouter } from "./routes/models";
 import { toolRouter } from "./routes/tools";
 import { anthropicRouter } from "./routes/anthropic";
+import { startJobs } from "./jobs";
 
 const app = express();
 app.use(cors());
@@ -29,4 +30,5 @@ app.use("/anthropic", anthropicRouter);
 app.listen(config.port, () => {
     console.log(`claude-ai-proxy listening on :${config.port}`);
     console.log(`auth: ${AUTH_FILE}`);
+    startJobs();
 });
