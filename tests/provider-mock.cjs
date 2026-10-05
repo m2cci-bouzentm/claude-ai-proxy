@@ -17,13 +17,38 @@ global.fetch = async (url, options = {}) => {
   if (path.endsWith('/usage')) return json({ five_hour: { utilization: 12.5 }, seven_day: { utilization: 4 } });
   if (path.endsWith('/profile')) return json({ account: { uuid: 'regression-account' } });
   if (/\/models\//.test(path)) return json({ id: path.split('/').at(-1), type: 'model', display_name: 'Regression model' });
-  if (path.endsWith('/models')) return json({ data: [{ id: 'claude-sonnet-4-6', type: 'model' }], has_more: false });
+  if (path.endsWith('/models')) {
+    const ids = [
+      'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-opus-5',
+      'claude-sonnet-5', 'claude-fable-5', 'claude-opus-4-8', 'claude-opus-4-7',
+      'claude-sonnet-4-6', 'claude-opus-4-6', 'claude-opus-4-5-20251101',
+      'claude-haiku-4-5-20251001', 'claude-sonnet-4-5-20250929',
+    ];
+    return json({
+      data: ids.map(id => ({
+        id,
+        type: 'model',
+        display_name: id,
+        created_at: '2026-09-28T00:00:00Z',
+      })),
+      has_more: false,
+    });
+  }
   const key = JSON.stringify(body.messages);
   const prior = seen.get(key) || 0; seen.set(key, prior + 1);
   const long = key.length > 10000;
   const usage = { input_tokens: 80, output_tokens: 8, cache_read_input_tokens: long && prior ? 4096 : 0, cache_creation_input_tokens: long && !prior ? 4096 : 0 };
   const forced = body.tools?.length && body.tool_choice && body.tool_choice.type !== 'auto';
-  const content = forced ? [{ type: 'tool_use', id: 'toolu_regression', name: 'echo', input: { text: 'HTTP_E2E_OK' } }] : [{ type: 'text', text: 'HTTP_E2E_OK' }];
+  let toolCall = null;
+  if (forced) {
+    const toolName = body.tool_choice?.name || (body.tool_choice?.type === 'tool' ? body.tool_choice.name : 'echo');
+    if (toolName === 'read') {
+      toolCall = { type: 'tool_use', id: 'toolu_regression_read', name: 'read', input: { filePath: '/workspace/src/index.ts' } };
+    } else {
+      toolCall = { type: 'tool_use', id: 'toolu_regression', name: toolName, input: { text: 'HTTP_E2E_OK' } };
+    }
+  }
+  const content = forced ? [toolCall] : [{ type: 'text', text: 'HTTP_E2E_OK' }];
   const message = { id: 'msg_regression', type: 'message', role: 'assistant', model: body.model, content, stop_reason: forced ? 'tool_use' : 'end_turn', stop_sequence: null, usage };
   if (!body.stream) return json(message);
   const block = content[0];

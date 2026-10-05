@@ -19,6 +19,14 @@ const docker = (...args) => execFileSync('docker', args, { cwd: root, encoding: 
     assert.ok(captures.some(c => JSON.stringify(c.body.messages || []).includes('"type":"image"')), 'provider image forwarding missing');
     assert.ok(captures.some(c => JSON.stringify(c.body.messages || []).includes('"type":"tool_result"')), 'provider tool result forwarding missing');
     assert.ok(captures.filter(c => c.path === '/v1/messages' && c.session === 'http-e2e-stable-session').length >= 3, 'native stable session forwarding missing');
+    const ocCapture = captures.find(c => c.body?.tools?.some(t => t.name === 'read'));
+    assert.ok(ocCapture, 'OpenCode read tool request missing in docker regression');
+    assert.deepEqual(ocCapture.body.tools.map(t => t.name), ['read', 'edit', 'write']);
+    assert.equal(ocCapture.body.system[0].text, 'Regression-only trusted prompt.');
+    assert.equal(ocCapture.body.system[1].text, '[system]\nOpenCode system authority prompt.');
+    assert.equal(ocCapture.body.system[2].text, '[developer]\nOpenCode developer guidance instructions.');
+    assert.ok(captures.some(c => c.body?.model === 'claude-haiku-4-5-20251001'), 'client model switch to haiku missing in docker regression');
+    assert.ok(captures.some(c => c.body?.model === 'claude-sonnet-4-6'), 'client model switch to sonnet missing in docker regression');
     console.log(`PASS: 11 public routes, multimodal/tools/SSE, repeated provider cache counters; ${captures.length} provider captures; external network disabled`);
   } finally {
     try { docker('rm', '-f', name); } catch {}

@@ -26,9 +26,126 @@ async function runCases({ baseURL, apiKey, model = MODEL, session = 'http-e2e-st
     return response;
   }
   assert.equal((await request('/health')).status, 200);
-  const models = await (await request('/openai/v1/models')).json(); assert.ok(models.data.some(m => m.id === model));
-  const nativeModels = await (await request('/anthropic/v1/models')).json(); assert.ok(nativeModels.data.length > 0);
+  const models = await (await request('/openai/v1/models')).json();
+  assert.equal(models.object, 'list');
+  assert.equal(models.data.length, 16, 'OpenAI catalog must advertise 16 models');
+  for (const m of models.data) {
+    assert.equal(typeof m.id, 'string');
+    assert.equal(typeof m.context_length, 'number');
+    assert.equal(m.object, 'model');
+    assert.equal(typeof m.created, 'number');
+    assert.equal(m.owned_by, 'anthropic');
+  }
+  assert.ok(models.data.some(m => m.id === 'claude-sonnet-4-6'));
+  assert.ok(models.data.some(m => m.id === 'claude-haiku-4-5-20251001'));
+
+  const nativeModels = await (await request('/anthropic/v1/models')).json();
+  assert.equal(nativeModels.data.length, 13, 'Anthropic catalog must advertise 13 models');
+  for (const m of nativeModels.data) {
+    assert.equal(m.type, 'model');
+    assert.equal(typeof m.id, 'string');
+    assert.equal(typeof m.display_name, 'string');
+    assert.equal(typeof m.created_at, 'string');
+  }
+  assert.ok(nativeModels.data.some(m => m.id === 'claude-sonnet-4-6'));
+  assert.ok(nativeModels.data.some(m => m.id === 'claude-haiku-4-5-20251001'));
   assert.equal((await (await request(`/anthropic/v1/models/${model}`)).json()).id, model);
+
+  // Model switching: verify two advertised selections reach upstream with exact IDs on both protocols
+  for (const targetModel of ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']) {
+    const oRes = await (await request('/openai/v1/chat/completions', { model: targetModel, max_tokens: 32, messages: [{ role: 'user', content: 'model test' }] })).json();
+    assert.equal(oRes.model, targetModel, `OpenAI model selection ${targetModel}`);
+    const aRes = await (await request('/anthropic/v1/messages', { model: targetModel, max_tokens: 32, messages: [{ role: 'user', content: 'model test' }] })).json();
+    assert.equal(aRes.model, targetModel, `Anthropic model selection ${targetModel}`);
+  }
+
+  // OpenCode Draft 2020-12 payload with read/edit/write tools and system/developer authority
+  const opencodeTools = [
+    {
+      type: 'function',
+      function: {
+        name: 'read',
+        description: 'Read a file from disk',
+        parameters: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          properties: { filePath: { type: 'string' } },
+          required: ['filePath'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'edit',
+        description: 'Edit a file on disk',
+        parameters: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          $defs: { contentDef: { type: 'string' } },
+          properties: {
+            filePath: { type: 'string' },
+            oldString: { $ref: '#/$defs/contentDef' },
+            newString: { type: 'string' },
+          },
+          required: ['filePath', 'oldString', 'newString'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'write',
+        description: 'Write a file to disk',
+        parameters: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          properties: {
+            filePath: { type: 'string' },
+            content: { type: 'string' },
+          },
+          required: ['filePath', 'content'],
+          additionalProperties: false,
+        },
+      },
+    },
+  ];
+  const opencodeMessages = [
+    { role: 'system', content: 'OpenCode system authority prompt.' },
+    { role: 'developer', content: 'OpenCode developer guidance instructions.' },
+    { role: 'user', content: 'Use read tool on /workspace/src/index.ts.' },
+  ];
+  const ocCallRes = await (await request('/openai/v1/chat/completions', {
+    model,
+    messages: opencodeMessages,
+    tools: opencodeTools,
+    tool_choice: { type: 'function', function: { name: 'read' } },
+  })).json();
+  assert.equal(ocCallRes.choices[0].finish_reason, 'tool_calls');
+  const ocCall = ocCallRes.choices[0].message.tool_calls[0];
+  assert.equal(ocCall.function.name, 'read');
+  assert.equal(ocCall.id, 'toolu_regression_read');
+  const ocArgs = JSON.parse(ocCall.function.arguments);
+  assert.equal(typeof ocArgs.filePath, 'string');
+  assert.equal(ocArgs.filePath, '/workspace/src/index.ts');
+
+  // OpenCode tool-result continuation roundtrip
+  const ocContinuationMessages = [
+    ...opencodeMessages,
+    ocCallRes.choices[0].message,
+    { role: 'tool', tool_call_id: ocCall.id, content: 'export const status = "OPENCODE_CONTINUATION_OK";' },
+  ];
+  const ocContinuationRes = await (await request('/openai/v1/chat/completions', {
+    model,
+    messages: ocContinuationMessages,
+    tools: opencodeTools,
+  })).json();
+  assert.equal(ocContinuationRes.choices[0].finish_reason, 'stop');
+  assert.equal(ocContinuationRes.choices[0].message.content, 'HTTP_E2E_OK');
+  assertUsage(ocContinuationRes, 'openai');
+
   const usage = await (await request('/anthropic/api/oauth/usage')).json(); assert.ok(usage.five_hour && Number.isFinite(usage.five_hour.utilization), 'OAuth usage missing');
   const profile = await (await request('/anthropic/api/oauth/profile')).json(); assert.ok(profile && Object.keys(profile).length > 0, 'profile missing');
   assert.equal((await request('/anthropic/api/hello', undefined, 'HEAD')).status, 200);

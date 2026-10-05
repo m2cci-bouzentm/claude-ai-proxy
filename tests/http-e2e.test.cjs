@@ -26,5 +26,13 @@ test('shared 11-route HTTP integration with regression-only mocked provider', as
     assert.ok(captures.some(c => JSON.stringify(c.body.messages || []).includes('"type":"image"')));
     assert.ok(captures.some(c => JSON.stringify(c.body.messages || []).includes('"type":"tool_result"')));
     assert.ok(captures.filter(c => c.session === 'http-e2e-stable-session').length >= 3);
+    const ocCapture = captures.find(c => c.body?.tools?.some(t => t.name === 'read'));
+    assert.ok(ocCapture, 'OpenCode read tool request must reach upstream');
+    assert.deepEqual(ocCapture.body.tools.map(t => t.name), ['read', 'edit', 'write']);
+    assert.equal(ocCapture.body.system[0].text, 'Regression-only trusted prompt.');
+    assert.equal(ocCapture.body.system[1].text, '[system]\nOpenCode system authority prompt.');
+    assert.equal(ocCapture.body.system[2].text, '[developer]\nOpenCode developer guidance instructions.');
+    assert.ok(captures.some(c => c.body?.model === 'claude-haiku-4-5-20251001'), 'exact client model switch to haiku reaches upstream');
+    assert.ok(captures.some(c => c.body?.model === 'claude-sonnet-4-6'), 'exact client model switch to sonnet reaches upstream');
   } finally { server.kill(); await new Promise(r => server.once('exit', r)); fs.rmSync(temporary, { recursive: true, force: true }); }
 });
