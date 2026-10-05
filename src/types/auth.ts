@@ -15,9 +15,9 @@ export interface KeychainTokens {
     accessToken: string;
     refreshToken: string;
     expiresAt: number;
-    scopes: string[];
-    subscriptionType: string | null;
-    rateLimitTier: string | null;
+    scopes?: string[];
+    subscriptionType?: string | null;
+    rateLimitTier?: string | null;
 }
 
 export interface CredentialsFile {
@@ -29,7 +29,17 @@ export interface OAuthEntry {
     access: string;
     refresh: string;
     expires: number;
-    scopes: string[];
+    scopes?: string[];
     subscriptionType: string | null;
     rateLimitTier: string | null;
+}
+
+export interface AuthStatus {
+    configured: boolean;
+    type?: string;
+    expiresAt?: string;
+    isExpired?: boolean;
+    scopes?: string[];
+    subscriptionType?: string | null;
+    rateLimitTier?: string | null;
 }

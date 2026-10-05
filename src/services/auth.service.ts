@@ -1,9 +1,7 @@
 import type { TokenResponse, AuthResult, OAuthEntry } from "../types/auth";
 import * as storage from "../lib/auth-storage";
-import {
-    readClaudeCredentials,
-    deleteClaudeCredentials,
-} from "../lib/keychain";
+import { readClaudeCredentials } from "../lib/keychain";
+import fs from "fs";
 
 const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -17,16 +15,14 @@ const SCOPES = [
 
 export { AUTH_FILE } from "../lib/auth-storage";
 
-// First run: seeds from Claude Code (keychain on macOS, plaintext on Linux),
-// then deletes the source so user can /login fresh for an independent CLI token.
-// After seed, refreshes independently via ~/.claude-proxy/auth.json.
-
+// First run: seeds from Claude Code (keychain on macOS, plaintext on Linux)
+// NON-DESTRUCTIVE: never deletes source credentials
 function seedFromClaude(): OAuthEntry {
     const tokens = readClaudeCredentials();
     if (!tokens?.accessToken) {
         throw new Error(
             "No Claude Code credentials found.\n" +
-                "Run `claude` and log in first, then restart the proxy.",
+                "Run `proxy-auth login` or `proxy-auth import`, or run `claude` and log in first.",
         );
     }
     const entry: OAuthEntry = {
@@ -35,18 +31,11 @@ function seedFromClaude(): OAuthEntry {
         refresh: tokens.refreshToken,
         expires: tokens.expiresAt,
         scopes: tokens.scopes,
-        subscriptionType: tokens.subscriptionType,
-        rateLimitTier: tokens.rateLimitTier,
+        subscriptionType: tokens.subscriptionType ?? null,
+        rateLimitTier: tokens.rateLimitTier ?? null,
     };
     storage.write(entry);
-    console.log("[auth] seeded from Claude Code, stored in", storage.AUTH_FILE);
-
-    if (deleteClaudeCredentials()) {
-        console.log(
-            "[auth] deleted Claude Code credentials — run `claude` and /login for independent CLI token",
-        );
-    }
-
+    console.log("[auth] seeded from Claude Code, stored in", storage.getAuthFile());
     return entry;
 }
 
@@ -71,10 +60,44 @@ async function refreshAccessToken(
 }
 
 let currentAuth: OAuthEntry | null = null;
+let lastAuthFileStat: { mtimeMs: number; ino: number; size: number } | null = null;
 let refreshPromise: Promise<void> | null = null;
 
+function checkAndReloadAuth(): void {
+    const authFile = storage.getAuthFile();
+    if (fs.existsSync(authFile)) {
+        try {
+            const stat = fs.statSync(authFile);
+            const isChanged =
+                !lastAuthFileStat ||
+                stat.mtimeMs !== lastAuthFileStat.mtimeMs ||
+                stat.ino !== lastAuthFileStat.ino ||
+                stat.size !== lastAuthFileStat.size;
+
+            if (isChanged || !currentAuth) {
+                const loaded = storage.read();
+                if (loaded) {
+                    currentAuth = loaded;
+                    lastAuthFileStat = {
+                        mtimeMs: stat.mtimeMs,
+                        ino: stat.ino,
+                        size: stat.size,
+                    };
+                }
+            }
+        } catch {
+            // Read or stat collision during atomic rename
+        }
+    } else if (!currentAuth) {
+        currentAuth = seedFromClaude();
+    }
+}
+
 export async function getAuth(): Promise<AuthResult> {
-    currentAuth ??= storage.read() ?? seedFromClaude();
+    checkAndReloadAuth();
+    if (!currentAuth) {
+        currentAuth = seedFromClaude();
+    }
 
     const BUFFER_MS = 5 * 60 * 1000;
     const needsRefresh =
@@ -121,4 +144,5 @@ export async function getAuth(): Promise<AuthResult> {
 
 export function clearAuth(): void {
     currentAuth = null;
+    lastAuthFileStat = null;
 }

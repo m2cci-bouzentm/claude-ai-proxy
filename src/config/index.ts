@@ -15,8 +15,9 @@ export const config = {
     accountUuid: process.env.ACCOUNT_UUID || "",
     deviceId: process.env.DEVICE_ID || crypto.randomBytes(32).toString("hex"),
     authDir:
+        process.env.PROXY_AUTH_DIR ||
         process.env.CLAUDE_PROXY_HOME ||
-        path.join(os.homedir(), ".claude-proxy"),
+        "/data",
     claudeHome:
         process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"),
     toolRequestTimeoutMs: 120_000,

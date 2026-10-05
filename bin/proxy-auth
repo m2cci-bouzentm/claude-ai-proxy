@@ -1,0 +1,88 @@
+#!/usr/bin/env node
+const { runStatus, runImport, runLogin } = require("../dist/cli.js");
+
+function printUsageAndExit() {
+    process.stderr.write(`Usage: proxy-auth <command> [options]
+
+Commands:
+  login [--browser] [--sso] [--console] [--email <address>]
+                                Run interactive native Claude login (default: --browser)
+  import [--file <path> | -]    Import credentials from file or stdin ('-')
+  status                        Print credential status and metadata (never secrets)
+`);
+    process.exit(1);
+}
+
+function main() {
+    const args = process.argv.slice(2);
+    const command = args[0];
+
+    if (!command || command === "--help" || command === "-h" || command === "help") {
+        printUsageAndExit();
+    }
+
+    try {
+        if (command === "status") {
+            const status = runStatus();
+            process.stdout.write(JSON.stringify(status, null, 2) + "\n");
+            process.exit(0);
+        }
+
+        if (command === "import") {
+            let source = "";
+            for (let i = 1; i < args.length; i++) {
+                if (args[i] === "--file" && args[i + 1]) {
+                    source = args[i + 1];
+                    i++;
+                } else if (args[i] === "-") {
+                    source = "-";
+                }
+            }
+
+            if (!source) {
+                process.stderr.write("Error: import requires --file <path> or '-'\n");
+                process.exit(1);
+            }
+
+            const status = runImport(source);
+            process.stdout.write(
+                JSON.stringify({ success: true, ...status }, null, 2) + "\n",
+            );
+            process.exit(0);
+        }
+
+        if (command === "login") {
+            let browser = true;
+            let sso = false;
+            let consoleOpt = false;
+            let email = undefined;
+
+            for (let i = 1; i < args.length; i++) {
+                if (args[i] === "--browser") {
+                    browser = true;
+                } else if (args[i] === "--sso") {
+                    sso = true;
+                } else if (args[i] === "--console") {
+                    consoleOpt = true;
+                } else if (args[i] === "--email" && args[i + 1]) {
+                    email = args[i + 1];
+                    i++;
+                }
+            }
+
+            const status = runLogin({ browser, sso, console: consoleOpt, email });
+            process.stdout.write(
+                JSON.stringify({ success: true, ...status }, null, 2) + "\n",
+            );
+            process.exit(0);
+        }
+
+        process.stderr.write(`Unknown command: ${command}\n`);
+        printUsageAndExit();
+    } catch (err) {
+        process.stderr.write(`Error: ${err.message}\n`);
+        process.exit(1);
+    }
+}
+
+main();

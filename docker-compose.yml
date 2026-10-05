@@ -4,9 +4,10 @@ services:
     container_name: claude-ai-proxy
     ports:
       - "4181:4181"
+    environment:
+      - PROXY_AUTH_DIR=/data
     volumes:
-      - ./data:/data
-      - ~/.claude/.credentials.json:/root/.claude/.credentials.json
+      - ${PROXY_AUTH_DIR:-claude-proxy-data}:/data
     env_file:
       - .env
     restart: unless-stopped
@@ -16,3 +17,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+
+volumes:
+  claude-proxy-data:

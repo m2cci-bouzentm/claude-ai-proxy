@@ -2,12 +2,30 @@
 
 OpenAI-compatible API proxy that routes through your Claude Code subscription (Max/Pro) instead of API credits. Unified `/openai/v1` supports text, native tools, images, and prompt caching. `/anthropic` exposes native Claude Code endpoints with centralized OAuth. Old `/v1` and `/tools/v1` roots are removed.
 
-## Setup
+## Setup & Authentication
 
-**Get auth credentials** — ensure `~/.claude/.credentials.json` exists locally:
+Authentication is unified across `/data/auth.json` (configurable via `PROXY_AUTH_DIR`).
 
-- **Linux**: already there after `claude` login
-- **macOS**: run `./extract-keychain.sh` to extract from Keychain to file
+Credentials are managed securely using the `proxy-auth` CLI, with zero token leaks in logs or status envelopes:
+
+```bash
+# Check status (configured, type, expiresAt, isExpired, subscriptionType)
+docker compose run --rm claude-proxy proxy-auth status
+# Or directly:
+docker compose run --rm claude-proxy status
+
+# Interactive login using official @anthropic-ai/claude-code CLI inside container:
+# Uses isolated configuration directory inside /data/.claude
+docker compose run --rm claude-proxy proxy-auth login --browser
+# Optional flags: --sso, --console, --email <address>
+
+# Import credentials from JSON file or stdin:
+# Accepts native Claude .credentials.json (claudeAiOauth) or normalized OAuth JSON
+docker compose run --rm -v $(pwd)/my-creds.json:/tmp/creds.json:ro claude-proxy proxy-auth import --file /tmp/creds.json
+cat my-creds.json | docker compose run --rm -T claude-proxy proxy-auth import -
+```
+
+The running server automatically reloads credentials when `/data/auth.json` is updated, without needing a restart. Seeding from local Claude credentials is completely non-destructive (never deletes source files).
 
 ## API
 
