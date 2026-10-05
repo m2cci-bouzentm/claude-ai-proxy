@@ -18,6 +18,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
+COPY data/ ./data/
 COPY bin/ ./bin/
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
