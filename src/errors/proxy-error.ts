@@ -63,11 +63,30 @@ export function upstreamRejection(
     return new ProxyError(`${provider} upstream failed (HTTP ${status})${suffix}`, 502, "upstream_error");
 }
 
-// Reads only the provider's structured `error.message`; raw bodies never leak.
+// Reads only the provider's structured `error.message` from at most 64 KiB;
+// raw bodies never leak.
 export async function readProviderMessage(response: Response): Promise<string | undefined> {
+    const limit = 64 * 1024;
+    const chunks: Uint8Array[] = [];
+    let size = 0;
     try {
-        const text = (await response.text()).slice(0, 64 * 1024);
-        const parsed = JSON.parse(text) as { error?: { message?: unknown } | string; detail?: unknown };
+        const reader = response.body?.getReader();
+        while (reader && size < limit) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            size += value.byteLength;
+        }
+        await reader?.cancel().catch(() => undefined);
+        return providerMessage(Buffer.concat(chunks).subarray(0, limit).toString("utf8"));
+    } catch {
+        return undefined;
+    }
+}
+
+export function providerMessage(body: string): string | undefined {
+    try {
+        const parsed = JSON.parse(body) as { error?: { message?: unknown } | string; detail?: unknown };
         if (typeof parsed.error === "string") return parsed.error;
         if (typeof parsed.error?.message === "string") return parsed.error.message;
         return typeof parsed.detail === "string" ? parsed.detail : undefined;
