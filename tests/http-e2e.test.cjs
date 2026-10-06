@@ -30,8 +30,8 @@ test('shared 11-route HTTP integration with regression-only mocked provider', as
     assert.ok(ocCapture, 'OpenCode read tool request must reach upstream');
     assert.deepEqual(ocCapture.body.tools.map(t => t.name), ['read', 'edit', 'write']);
     assert.equal(ocCapture.body.system[0].text, 'Regression-only trusted prompt.');
-    assert.equal(ocCapture.body.system[1].text, '[system]\nOpenCode system authority prompt.');
-    assert.equal(ocCapture.body.system[2].text, '[developer]\nOpenCode developer guidance instructions.');
+    assert.equal(ocCapture.body.system.length, 1, 'only the fixed prompt is system content');
+    assert.equal(ocCapture.body.messages[0].content[0].text, '<client_instructions>\nOpenCode system authority prompt.\n\nOpenCode developer guidance instructions.\n</client_instructions>');
     assert.ok(captures.some(c => c.body?.model === 'claude-haiku-4-5-20251001'), 'exact client model switch to haiku reaches upstream');
     assert.ok(captures.some(c => c.body?.model === 'claude-sonnet-4-6'), 'exact client model switch to sonnet reaches upstream');
   } finally { server.kill(); await new Promise(r => server.once('exit', r)); fs.rmSync(temporary, { recursive: true, force: true }); }

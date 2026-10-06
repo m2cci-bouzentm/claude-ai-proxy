@@ -125,18 +125,17 @@ export function prepareToolRequest(
             "Conversation must start and end with a user message or tool result",
         );
     }
+    // The fixed Claude Code prompt stays the only system content; client
+    // instructions lead the first user turn, same position every turn.
+    if (consumerInstructions.length)
+        messages[0].content.unshift({
+            type: "text",
+            text: `<client_instructions>\n${consumerInstructions.map(({ content }) => content).join("\n\n")}\n</client_instructions>`,
+        });
     const request: NativeRequest = {
         model: resolveModelId(model),
         max_tokens: maxTokens,
         messages,
-        ...(consumerInstructions.length
-            ? {
-                  system: consumerInstructions.map(({ source_role, content }) => ({
-                      type: "text" as const,
-                      text: `[${source_role}]\n${content}`,
-                  })),
-              }
-            : {}),
     };
     // Server-owned automatic caching follows the growing conversation. Keep the
     // file-backed system prompt and its existing explicit cache markers untouched.

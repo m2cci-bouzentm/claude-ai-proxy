@@ -196,6 +196,20 @@ tool/cache probes passed. See [Anthropic's refusal documentation](https://platfo
 
 Run `npm test` for route, compatibility, schema, streaming and cancellation tests.
 
+## System prompt contract
+
+- `/openai/v1`: the system field is only the fixed Claude Code prompt in `data/system_prompt.json`
+  (identity and product guidance, no captured local session data, existing cache markers kept).
+  Every client `system`/`developer` message is forwarded unchanged, joined in one
+  `<client_instructions>` block placed first in the first user turn. It sits in the same
+  position on every turn, so the cached prefix stays stable.
+- `/anthropic`: pure pass-through. Real Claude Code already sends its own original prompt, so the
+  proxy does not inject or move anything.
+
+Sister proxies: `agy-openai-proxy` uses the same rule on both routes (Google filters foreign client
+identity text in system instructions); `codex-openai-proxy` injects no fixed prompt because OpenAI
+allows third-party clients on Codex subscriptions.
+
 ## Architecture & Shared Contract
 
 Canonical layers match Codex proxy so provider adapters can eventually live in one repository:
