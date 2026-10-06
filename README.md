@@ -23,6 +23,7 @@ Inside the running container, execute one command:
 ```bash
 proxy-auth login
 ```
+
 Interactive menu offers browser login, SSO login, Anthropic Console login, or
 hidden field-by-field token paste. `proxy-auth import` opens the token-paste
 wizard directly and asks for access token, refresh token, and expiry one by one.
@@ -51,13 +52,13 @@ Works with any OpenAI SDK — just change `base_url` to `http://localhost:4181/o
 
 ## Endpoints
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/health` | No | Proxy health |
-| GET | `/openai/v1/models` | No | OpenAI model discovery |
-| POST | `/openai/v1/chat/completions` | Yes | Unified text/tools/images/caching |
-| POST | `/anthropic/v1/messages` | Yes | Native Messages and incremental SSE |
-| POST | `/anthropic/v1/messages/count_tokens` | Yes | Native token counting |
+| Method | Path                                  | Auth | Description                         |
+| ------ | ------------------------------------- | ---- | ----------------------------------- |
+| GET    | `/health`                             | No   | Proxy health                        |
+| GET    | `/openai/v1/models`                   | No   | OpenAI model discovery              |
+| POST   | `/openai/v1/chat/completions`         | Yes  | Unified text/tools/images/caching   |
+| POST   | `/anthropic/v1/messages`              | Yes  | Native Messages and incremental SSE |
+| POST   | `/anthropic/v1/messages/count_tokens` | Yes  | Native token counting               |
 
 | GET | `/anthropic/v1/models` | Yes | Upstream model discovery/pagination |
 | GET | `/anthropic/v1/models/:model` | Yes | Upstream model details |
@@ -234,18 +235,18 @@ All inbound OpenAI/Anthropic payloads, environment variables, auth storage files
 
 ## Environment variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `API_KEY` | required | Secures proxy endpoint |
-| `DEFAULT_MODEL` | `claude-sonnet-4-6` | Fallback model |
-| `PORT` | `4181` | Internal container port |
-| `PROXY_AUTH_DIR` | `/data` in Docker | Container/local auth storage directory |
-| `PROXY_AUTH_VOLUME` | `claude-proxy-data` | Compose host volume source mounted at `/data` |
-| `CLAUDE_PROXY_HOME` | `/data` | Legacy auth storage fallback |
-| `ACCOUNT_UUID` | required | Claude account UUID |
-| `DEVICE_ID` | required | Device ID hex string |
-| `SYSTEM_PROMPT_PATH` | `/data/system_prompt.json` | CLI system prompt file |
-| `TOOL_PROMPT_CACHE_TTL` | `5m` | Automatic conversation caching on `/openai/v1` only: `5m`, `1h`, or `off` |
+| Variable                | Default                    | Description                                                               |
+| ----------------------- | -------------------------- | ------------------------------------------------------------------------- |
+| `API_KEY`               | required                   | Secures proxy endpoint                                                    |
+| `DEFAULT_MODEL`         | `claude-sonnet-4-6`        | Fallback model                                                            |
+| `PORT`                  | `4181`                     | Internal container port                                                   |
+| `PROXY_AUTH_DIR`        | `/data` in Docker          | Container/local auth storage directory                                    |
+| `PROXY_AUTH_VOLUME`     | `claude-proxy-data`        | Compose host volume source mounted at `/data`                             |
+| `CLAUDE_PROXY_HOME`     | `/data`                    | Legacy auth storage fallback                                              |
+| `ACCOUNT_UUID`          | required                   | Claude account UUID                                                       |
+| `DEVICE_ID`             | required                   | Device ID hex string                                                      |
+| `SYSTEM_PROMPT_PATH`    | `/data/system_prompt.json` | CLI system prompt file                                                    |
+| `TOOL_PROMPT_CACHE_TTL` | `5m`                       | Automatic conversation caching on `/openai/v1` only: `5m`, `1h`, or `off` |
 
 ### Prompt caching on the tool endpoint
 

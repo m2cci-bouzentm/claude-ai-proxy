@@ -3,14 +3,18 @@
   "version": "1.0.0",
   "private": true,
   "bin": {
-    "proxy-auth": "bin/proxy-auth"
+    "proxy-auth": "./bin/proxy-auth"
   },
   "scripts": {
     "build": "tsc",
     "test": "npm run build && SYSTEM_PROMPT_PATH=./data/system_prompt.json node --test tests/*.test.cjs",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "setup": "bash setup.sh"
+    "setup": "bash setup.sh",
+    "lint": "oxlint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
@@ -25,8 +29,13 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
+    "oxlint": "1.60.0",
+    "oxlint-tsgolint": "0.21.0",
+    "prettier": "3.6.2",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   },
-  "overrides": { "qs": "6.16.0" }
+  "overrides": {
+    "qs": "6.16.0"
+  }
 }
