@@ -23,6 +23,7 @@ Inside the running container, execute one command:
 ```bash
 proxy-auth login
 ```
+
 Interactive menu offers browser login, SSO login, Anthropic Console login, or
 hidden field-by-field token paste. `proxy-auth import` opens the token-paste
 wizard directly and asks for access token, refresh token, and expiry one by one.
@@ -51,13 +52,13 @@ Works with any OpenAI SDK — just change `base_url` to `http://localhost:4181/o
 
 ## Endpoints
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/health` | No | Proxy health |
-| GET | `/openai/v1/models` | No | OpenAI model discovery |
-| POST | `/openai/v1/chat/completions` | Yes | Unified text/tools/images/caching |
-| POST | `/anthropic/v1/messages` | Yes | Native Messages and incremental SSE |
-| POST | `/anthropic/v1/messages/count_tokens` | Yes | Native token counting |
+| Method | Path                                  | Auth | Description                         |
+| ------ | ------------------------------------- | ---- | ----------------------------------- |
+| GET    | `/health`                             | No   | Proxy health                        |
+| GET    | `/openai/v1/models`                   | No   | OpenAI model discovery              |
+| POST   | `/openai/v1/chat/completions`         | Yes  | Unified text/tools/images/caching   |
+| POST   | `/anthropic/v1/messages`              | Yes  | Native Messages and incremental SSE |
+| POST   | `/anthropic/v1/messages/count_tokens` | Yes  | Native token counting               |
 
 | GET | `/anthropic/v1/models` | Yes | Upstream model discovery/pagination |
 | GET | `/anthropic/v1/models/:model` | Yes | Upstream model details |
@@ -196,6 +197,20 @@ tool/cache probes passed. See [Anthropic's refusal documentation](https://platfo
 
 Run `npm test` for route, compatibility, schema, streaming and cancellation tests.
 
+## System prompt contract
+
+- `/openai/v1`: the system field is only the fixed Claude Code prompt in `data/system_prompt.json`
+  (identity and product guidance, no captured local session data, existing cache markers kept).
+  Every client `system`/`developer` message is forwarded unchanged, joined in one
+  `<client_instructions>` block placed first in the first user turn. It sits in the same
+  position on every turn, so the cached prefix stays stable.
+- `/anthropic`: pure pass-through. Real Claude Code already sends its own original prompt, so the
+  proxy does not inject or move anything.
+
+Sister proxies: `agy-openai-proxy` uses the same rule on both routes (Google filters foreign client
+identity text in system instructions); `codex-openai-proxy` injects no fixed prompt because OpenAI
+allows third-party clients on Codex subscriptions.
+
 ## Architecture & Shared Contract
 
 Canonical layers match Codex proxy so provider adapters can eventually live in one repository:
@@ -220,18 +235,18 @@ All inbound OpenAI/Anthropic payloads, environment variables, auth storage files
 
 ## Environment variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `API_KEY` | required | Secures proxy endpoint |
-| `DEFAULT_MODEL` | `claude-sonnet-4-6` | Fallback model |
-| `PORT` | `4181` | Internal container port |
-| `PROXY_AUTH_DIR` | `/data` in Docker | Container/local auth storage directory |
-| `PROXY_AUTH_VOLUME` | `claude-proxy-data` | Compose host volume source mounted at `/data` |
-| `CLAUDE_PROXY_HOME` | `/data` | Legacy auth storage fallback |
-| `ACCOUNT_UUID` | required | Claude account UUID |
-| `DEVICE_ID` | required | Device ID hex string |
-| `SYSTEM_PROMPT_PATH` | `/data/system_prompt.json` | CLI system prompt file |
-| `TOOL_PROMPT_CACHE_TTL` | `5m` | Automatic conversation caching on `/openai/v1` only: `5m`, `1h`, or `off` |
+| Variable                | Default                    | Description                                                               |
+| ----------------------- | -------------------------- | ------------------------------------------------------------------------- |
+| `API_KEY`               | required                   | Secures proxy endpoint                                                    |
+| `DEFAULT_MODEL`         | `claude-sonnet-4-6`        | Fallback model                                                            |
+| `PORT`                  | `4181`                     | Internal container port                                                   |
+| `PROXY_AUTH_DIR`        | `/data` in Docker          | Container/local auth storage directory                                    |
+| `PROXY_AUTH_VOLUME`     | `claude-proxy-data`        | Compose host volume source mounted at `/data`                             |
+| `CLAUDE_PROXY_HOME`     | `/data`                    | Legacy auth storage fallback                                              |
+| `ACCOUNT_UUID`          | required                   | Claude account UUID                                                       |
+| `DEVICE_ID`             | required                   | Device ID hex string                                                      |
+| `SYSTEM_PROMPT_PATH`    | `/data/system_prompt.json` | CLI system prompt file                                                    |
+| `TOOL_PROMPT_CACHE_TTL` | `5m`                       | Automatic conversation caching on `/openai/v1` only: `5m`, `1h`, or `off` |
 
 ### Prompt caching on the tool endpoint
 
@@ -274,3 +289,12 @@ OpenAI `detail` values are accepted but have no direct native equivalent and are
 not forwarded. Images are input only; assistant responses remain text/tool calls.
 The 32 MiB total request limit still applies. System/developer messages remain
 text-only and are moved to user-level context as described above.
+
+## Development
+
+Shared with the sibling proxies (`agy-openai-proxy`, `claude-ai-proxy`, `codex-openai-proxy`) so they can merge later:
+
+- Style follows OpenCode: Prettier 3.6.2 (`semi: false`, `printWidth: 120`) and oxlint 1.60.0, type-aware.
+- `npm run lint`, `npm run format:check`, `npm run typecheck`, `npm test`.
+- `src/schemas/contracts.schema.ts`, `src/errors/proxy-error.ts`, `src/lib/require-binary.ts`, the tool configs and `tests/architecture-contract.test.cjs` are byte-identical across the three repos; the architecture test pins their hashes.
+- `proxy-auth login` checks for the official client binary first and aborts with install instructions when it is missing.

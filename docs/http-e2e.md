@@ -86,6 +86,7 @@ logged or copied into image layers.
 ## Comprehensive tool, model and cache matrix verification
 
 Full client matrix verified across Claude Code and OpenCode:
+
 - **Claude Code**: 6/6 tools verified (`Read`, `Edit`, `Bash`, `Write`, `Glob`, `Grep`) via native Anthropic messages protocol.
 - **OpenCode**: 10/10 tools verified (`bash`, `read`, `edit`, `write`, `glob`, `grep`, `todowrite`, `task`, `skill`, `webfetch`) via OpenAI-compatible route.
 - **Catalogs and models**: OpenAI endpoint advertises 20 models; Anthropic endpoint advertises 13 models. Model switching verified for client requests targeting exact IDs (`claude-sonnet-4-6`, `claude-haiku-4-5-20251001`, `claude-opus-4-8`).
