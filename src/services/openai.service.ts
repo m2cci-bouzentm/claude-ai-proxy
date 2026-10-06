@@ -9,6 +9,7 @@ import type {
 import Ajv2020, { type ValidateFunction } from "ajv/dist/2020";
 import { config, getToolCacheTtl } from "../config";
 import { ToolError } from "../errors/tool-error";
+import { readProviderMessage, upstreamRejection } from "../errors/proxy-error";
 import { upstreamEventSchema, upstreamMessageSchema, upstreamUsageSchema } from "../schemas/provider.schema";
 import type {
     ToolRequest,
@@ -186,10 +187,11 @@ export async function collectToolResponse(
     onText?: (text: string) => void,
 ): Promise<ToolCompletion> {
     if (!response.ok) {
-        await response.body?.cancel();
-        throw new ToolError(
-            `Claude API request failed (${response.status})`,
-            response.status === 429 ? 429 : 502,
+        throw upstreamRejection(
+            "Anthropic",
+            response.status,
+            await readProviderMessage(response),
+            response.headers.get("retry-after"),
         );
     }
     if (!response.body) throw new ToolError("Empty upstream response", 502);
