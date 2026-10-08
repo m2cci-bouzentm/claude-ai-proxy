@@ -277,6 +277,8 @@ OpenCode 1.14.39 sends Draft 2020-12 tool schemas on every request. A live run e
 
 ## Security note
 
+Inference requests emit structured `[runtime:start]` and `[runtime:end]` lines with protocol, requested/upstream model, effort, streaming flag, message/tool counts, status, error flag, and duration. Prompts, tool arguments/results, headers, API keys, and tokens are never logged.
+
 Claude Code's subscriber-tier API access is gated by the presence of the CLI system prompt in the request body — not by cryptographic signing or token scoping. The system prompt is shipped in plaintext inside the compiled CLI binary, making it trivially extractable. It functions as a shared secret in cleartext.
 
 ### Image input on the tool endpoint

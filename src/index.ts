@@ -7,6 +7,8 @@ import { healthRouter } from "./routes/health"
 import { openaiRouter } from "./routes/openai"
 import { anthropicRouter } from "./routes/anthropic"
 import { startJobs } from "./jobs"
+import { resolveModelId } from "./config/models"
+import { runtimeLogger } from "./lib/runtime-logger"
 
 const app = express()
 app.use(cors())
@@ -14,6 +16,13 @@ app.use(cors())
 // Configure body parsers for high-capacity inference endpoints (32mb)
 app.use(["/openai/v1/chat/completions", "/anthropic"], express.json({ limit: "32mb" }))
 app.use(express.json())
+app.use(
+  runtimeLogger({
+    resolveOpenAIModel: resolveModelId,
+    defaultModel: config.defaultModel,
+    openaiEffortSupported: false,
+  }),
+)
 
 app.use("/health", healthRouter)
 
