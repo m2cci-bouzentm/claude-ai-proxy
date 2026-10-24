@@ -6,6 +6,7 @@ import type { ContentBlockParam, MessageStreamEvent } from "@anthropic-ai/sdk/re
 import Ajv2020, { type ValidateFunction } from "ajv/dist/2020"
 import { config, getToolCacheTtl } from "../config"
 import { ProxyError } from "../errors/proxy-error"
+import type { RequestCancellation } from "../types/http"
 import { readProviderMessage, upstreamRejection } from "../errors/proxy-error"
 import { upstreamEventSchema, upstreamMessageSchema, upstreamUsageSchema } from "../schemas/provider.schema"
 import type {
@@ -148,6 +149,7 @@ export async function collectToolResponse(
   response: Response,
   prepared: PreparedToolRequest,
   onText?: (text: string) => void,
+  onChunk?: () => void,
 ): Promise<ToolCompletion> {
   if (!response.ok) {
     throw upstreamRejection(
@@ -165,6 +167,7 @@ export async function collectToolResponse(
   const bounded = response.body.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
+        onChunk?.()
         bytes += chunk.byteLength
         if (bytes > config.toolResponseByteLimit) throw new ProxyError("Upstream response exceeds 8 MiB", 502)
         controller.enqueue(chunk)
@@ -290,11 +293,12 @@ export async function completeToolChat(
   input: ToolRequest,
   defaultModel: string,
   transport: ToolTransport,
-  signal: AbortSignal,
+  cancellation: RequestCancellation,
   onText?: (text: string) => void,
 ) {
   const prepared = prepareToolRequest(input, defaultModel)
-  const result = await collectToolResponse(await transport(prepared.request, signal), prepared, onText)
+  const response = await transport(prepared.request, cancellation.signal)
+  const result = await collectToolResponse(response, prepared, onText, cancellation.touch)
   return {
     result,
     stream: prepared.stream,

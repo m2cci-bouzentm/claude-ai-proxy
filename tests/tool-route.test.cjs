@@ -680,3 +680,42 @@ test("JSON and SSE expose the same structured refusal without partial tool calls
     await new Promise((resolve) => server.close(resolve))
   }
 })
+
+test("upstream idle timeout resets on every chunk, so slow streams longer than it complete", async () => {
+  const app = express()
+  app.use(express.json())
+  app.use(
+    "/openai/v1",
+    createToolRouter(async (_body, signal) => {
+      const frames = (await fixture().text()).split(/(?<=\r\n\r\n)/)
+      const body = new ReadableStream({
+        async start(controller) {
+          signal.addEventListener("abort", () => controller.error(new Error("aborted")), { once: true })
+          for (const frame of frames) {
+            if (signal.aborted) return
+            await new Promise((resolve) => setTimeout(resolve, 30))
+            controller.enqueue(new TextEncoder().encode(frame))
+          }
+          controller.close()
+        },
+      })
+      return new Response(body, { headers: { "content-type": "text/event-stream" } })
+    }, "fallback"),
+  )
+  const server = app.listen(0, "127.0.0.1")
+  await new Promise((resolve) => server.once("listening", resolve))
+  process.env.ANTHROPIC_TIMEOUT_MS = "80"
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/openai/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request()),
+    })
+    assert.equal(response.status, 200)
+    assert.equal((await response.json()).choices[0].finish_reason, "tool_calls")
+  } finally {
+    delete process.env.ANTHROPIC_TIMEOUT_MS
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+  }
+})

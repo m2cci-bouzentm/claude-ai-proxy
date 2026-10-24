@@ -45,6 +45,15 @@ test("native gateway authenticates, preserves request, replaces credentials, str
       return res.end()
     }
     if (body.model === "slow") return
+    if (body.model === "trickle") {
+      res.writeHead(200, { "content-type": "text/event-stream" })
+      res.write('event: message_start\ndata: {"type":"message_start"}\n\n')
+      for (let i = 0; i < 6; i++) {
+        await new Promise((r) => setTimeout(r, 30))
+        res.write('event: ping\ndata: {"type":"ping"}\n\n')
+      }
+      return res.end('event: message_stop\ndata: {"type":"message_stop"}\n\n')
+    }
     if (body.model === "redirect") {
       res.writeHead(307, { location: "/redirect-target" })
       return res.end()
@@ -185,6 +194,10 @@ test("native gateway authenticates, preserves request, replaces credentials, str
     process.env.ANTHROPIC_TIMEOUT_MS = "50"
     const timeout = await post({ ...body, model: "slow" })
     assert.equal(timeout.status, 504)
+    // Idle timeout resets on each chunk: a stream longer than the timeout still completes.
+    process.env.ANTHROPIC_TIMEOUT_MS = "80"
+    const trickle = await post({ ...body, model: "trickle", stream: true })
+    assert.match(await trickle.text(), /message_stop/)
     delete process.env.ANTHROPIC_TIMEOUT_MS
     auth.getAuth = async () => {
       throw Error("server-oauth-test-token inbound-test-key")
