@@ -60,14 +60,6 @@ function validateSseFrame(frame: string): void {
 
 export async function proxyAnthropicMessages(req: Request, res: Response): Promise<void> {
   const cancellation = createRequestCancellation(res)
-  const configuredTimeout = Number(process.env.ANTHROPIC_TIMEOUT_MS ?? 120_000)
-  const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 120_000
-  let timeout: ReturnType<typeof setTimeout> | undefined
-  const resetTimeout = () => {
-    clearTimeout(timeout)
-    timeout = setTimeout(() => cancellation.abort(), timeoutMs)
-    timeout.unref()
-  }
   try {
     let incomingBody: Record<string, unknown> = req.body ?? {}
     const isMessages = req.path === "/v1/messages"
@@ -93,7 +85,7 @@ export async function proxyAnthropicMessages(req: Request, res: Response): Promi
       incomingBody = parsed.data
     }
 
-    resetTimeout()
+    cancellation.touch()
     const auth = await getAuth()
     const resolvedModel = typeof incomingBody.model === "string" ? resolveModelId(incomingBody.model) : undefined
 
@@ -214,7 +206,7 @@ export async function proxyAnthropicMessages(req: Request, res: Response): Promi
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        resetTimeout()
+        cancellation.touch()
         if (res.destroyed) break
         pending += decoder.decode(value, { stream: true })
         for (;;) {
@@ -253,7 +245,6 @@ export async function proxyAnthropicMessages(req: Request, res: Response): Promi
       },
     })
   } finally {
-    clearTimeout(timeout)
     cancellation.dispose()
   }
 }

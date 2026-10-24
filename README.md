@@ -88,8 +88,8 @@ management APIs are not proxied; this is not a full claude.ai backend replacemen
 Automated tests use a local fake upstream; real multi-device Claude Code/OAuth
 inference has not been smoke-tested. Client-supplied metadata is preserved.
 Redirects are rejected. Buffered upstream responses are limited to 32 MiB.
-`ANTHROPIC_TIMEOUT_MS` defaults to 120000: first-response/body deadline and
-stream idle timeout, refreshed on each streamed chunk.
+`ANTHROPIC_TIMEOUT_MS` defaults to 600000: upstream idle timeout for every
+endpoint, refreshed on each received chunk, so long streams are never cut.
 Use HTTPS or private networking for remote access; never expose an unprotected
 proxy. `/tools/v1` has been removed; migrate clients to `/openai/v1`.
 
@@ -124,8 +124,8 @@ updated conversation to the same endpoint. The proxy never executes tools.
   tool definitions emit text deltas live through this same unified handler.
   Tool turns remain buffered until executable calls validate. Text-only,
   non-Haiku requests retain adaptive thinking; forced tool calls never enable it.
-- Requests are limited to 32 MiB (to accommodate 1M-token contexts), upstream responses to 8 MiB, and upstream time to
-  120 seconds. Client disconnects abort the new route's upstream request.
+- Requests are limited to 32 MiB (to accommodate 1M-token contexts), upstream responses to 8 MiB, and upstream silence to
+  `ANTHROPIC_TIMEOUT_MS` (10 minutes by default). Client disconnects abort the new route's upstream request.
 - Text and image content in user/tool messages; `n=1`. `response_format` and legacy `functions`/`function_call`
   are rejected. Adaptive thinking is not enabled on this route because forced
   tool selection is incompatible with it. Native Anthropic thinking passes through unchanged.

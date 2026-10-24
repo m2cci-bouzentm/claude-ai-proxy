@@ -62,7 +62,7 @@ export function createOpenAIController(transport: ToolTransport, defaultModel: s
         req.body,
         defaultModel,
         transport,
-        cancellation.signal,
+        cancellation,
         liveText ? onText : undefined,
       )
       if (res.destroyed) return
